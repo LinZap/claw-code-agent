@@ -118,7 +118,7 @@ claw-code/
 | Requirement | Details |
 |-------------|---------|
 | 🐍 Python | `3.10` or higher |
-| 🖥️ Model Server | `vLLM` with tool calling enabled |
+| 🖥️ Model Server | `vLLM` or `Ollama`, with tool calling support |
 | 🧠 Model | [`Qwen/Qwen3-Coder-30B-A3B-Instruct`](https://huggingface.co/Qwen/Qwen3-Coder-30B-A3B-Instruct) (recommended) |
 
 ---
@@ -145,6 +145,33 @@ curl http://127.0.0.1:8000/v1/models
 ```
 
 > 📚 **References:** [vLLM Tool Calling Docs](https://docs.vllm.ai/en/v0.13.0/features/tool_calling/) · [OpenAI-Compatible Server](https://docs.vllm.ai/en/v0.13.0/serving/openai_compatible_server.html)
+
+### Optional: Use Ollama Instead of vLLM
+
+`claw-code-agent` can also work with Ollama because the runtime targets an OpenAI-compatible API. Use a model that supports tool calling well.
+
+Example:
+
+```bash
+ollama serve
+ollama pull qwen3
+```
+
+Then configure:
+
+```bash
+export OPENAI_BASE_URL=http://127.0.0.1:11434/v1
+export OPENAI_API_KEY=ollama
+export OPENAI_MODEL=qwen3
+```
+
+Notes:
+
+- prefer tool-capable models such as `qwen3`
+- plain chat-only models are not enough for full agent behavior
+- Ollama does not use the `vLLM` parser flags shown above
+
+> 📚 **References:** [Ollama OpenAI Compatibility](https://docs.ollama.com/api/openai-compatibility) · [Ollama Tool Calling](https://docs.ollama.com/capabilities/tool-calling)
 
 ### 2. Configure Environment
 
