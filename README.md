@@ -125,7 +125,7 @@ claw-code/
 | Requirement | Details |
 |-------------|---------|
 | 🐍 Python | `3.10` or higher |
-| 🖥️ Model Server | `vLLM`, `Ollama`, or `LiteLLM Proxy`, with tool calling support |
+| 🖥️ Model Server | `vLLM`, `Ollama`, `LiteLLM Proxy`, or `OpenRouter`, with tool calling support |
 | 🧠 Model | [`Qwen/Qwen3-Coder-30B-A3B-Instruct`](https://huggingface.co/Qwen/Qwen3-Coder-30B-A3B-Instruct) (recommended) |
 
 ---
@@ -206,6 +206,27 @@ Notes:
 - if you configure a LiteLLM master key, use that instead of `anything`
 
 > 📚 **References:** [LiteLLM Docs](https://docs.litellm.ai/) · [LiteLLM Proxy Quick Start](https://docs.litellm.ai/)
+
+### Optional: Use OpenRouter
+
+`claw-code-agent` can also work with [OpenRouter](https://openrouter.ai/), a cloud API gateway that provides access to models from OpenAI, Anthropic, Google, Meta, and others through a single OpenAI-compatible endpoint. No local model server required.
+
+Configure:
+
+```bash
+export OPENAI_BASE_URL=https://openrouter.ai/api/v1
+export OPENAI_API_KEY=sk-or-v1-your-key-here
+export OPENAI_MODEL=openai/gpt-4o-mini
+```
+
+Notes:
+
+- sign up at [openrouter.ai](https://openrouter.ai/) and create an API key under [Keys](https://openrouter.ai/keys)
+- model names use the `provider/model` format (e.g. `anthropic/claude-sonnet-4`, `openai/gpt-4o`, `google/gemini-2.5-pro`)
+- tool calling support varies by model — check the [model list](https://openrouter.ai/models) for capabilities
+- this sends your conversation (including file contents and shell output) to OpenRouter and the upstream provider — do not use with repos containing secrets or sensitive data
+
+> 📚 **References:** [OpenRouter Docs](https://openrouter.ai/docs) · [Supported Models](https://openrouter.ai/models) · [API Keys](https://openrouter.ai/keys)
 
 ### 2. Configure Environment
 
