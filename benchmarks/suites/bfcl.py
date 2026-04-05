@@ -320,6 +320,7 @@ class BFCLBenchmark(BenchmarkSuite):
                 problem_id=pid, passed=False, error="solution.py not found"
             )
 
+        output = ""
         test_harness = os.path.join(workspace, "test_harness.py")
         if os.path.exists(test_harness):
             code, output = self._run_shell(
@@ -335,6 +336,6 @@ class BFCLBenchmark(BenchmarkSuite):
 
         return BenchmarkResult(
             problem_id=pid, passed=passed,
-            actual=output[:500] if "output" in dir() else "",
-            error="" if passed else (output[:500] if "output" in dir() else "function call not found"),
+            actual=output[:500],
+            error="" if passed else (output[:500] if output else "function call not found"),
         )

@@ -90,7 +90,7 @@ _BUILTIN_PROBLEMS: list[dict[str, Any]] = [
         "code": 'import re\ndef find_char_long(text):\n  return (re.findall(r"\\b\\w{4,}\\b", text))',
         "test_list": [
             'assert find_char_long(\'Please move back to stream\') == [\'Please\', \'move\', \'back\', \'stream\']',
-            'assert find_char_long(\'Joveacvber gfnbb vcdf\') == [\'Jove\', \'acvber\', \'gfnbb\', \'vcdf\']' + "",
+            'assert find_char_long(\'Joveacvber gfnbb vcdf\') == [\'Jove\', \'acvber\', \'gfnbb\', \'vcdf\']',
             'assert find_char_long(\'Davvede aridge\') == [\'Davvede\', \'aridge\']',
         ],
     },
