@@ -127,3 +127,43 @@ class MainCliTests(unittest.TestCase):
         self.assertEqual(recorded_results, ['First chat reply.', 'Second chat reply.'])
         self.assertIn('# Agent Chat', recorded_lines)
         self.assertIn('chat_ended=user_exit', recorded_lines)
+
+    def test_parser_accepts_remote_runtime_commands(self) -> None:
+        parser = build_parser()
+        args = parser.parse_args(['remote-profiles', '--cwd', '.'])
+        self.assertEqual(args.command, 'remote-profiles')
+        self.assertEqual(args.cwd, '.')
+
+    def test_parser_accepts_account_runtime_commands(self) -> None:
+        parser = build_parser()
+        args = parser.parse_args(['account-profiles', '--cwd', '.'])
+        self.assertEqual(args.command, 'account-profiles')
+        self.assertEqual(args.cwd, '.')
+
+    def test_parser_accepts_search_runtime_commands(self) -> None:
+        parser = build_parser()
+        args = parser.parse_args(['search', 'repo query', '--cwd', '.', '--provider', 'local-search'])
+        self.assertEqual(args.command, 'search')
+        self.assertEqual(args.query, 'repo query')
+        self.assertEqual(args.provider, 'local-search')
+        self.assertEqual(args.cwd, '.')
+
+    def test_parser_accepts_mcp_runtime_commands(self) -> None:
+        parser = build_parser()
+        args = parser.parse_args(['mcp-tools', '--cwd', '.', '--server', 'remote'])
+        self.assertEqual(args.command, 'mcp-tools')
+        self.assertEqual(args.server, 'remote')
+        self.assertEqual(args.cwd, '.')
+
+    def test_parser_accepts_daemon_subcommands(self) -> None:
+        parser = build_parser()
+        args = parser.parse_args(['daemon', 'ps'])
+        self.assertEqual(args.command, 'daemon')
+        self.assertEqual(args.daemon_command, 'ps')
+
+    def test_parser_accepts_config_runtime_commands(self) -> None:
+        parser = build_parser()
+        args = parser.parse_args(['config-get', 'review.mode', '--cwd', '.'])
+        self.assertEqual(args.command, 'config-get')
+        self.assertEqual(args.key_path, 'review.mode')
+        self.assertEqual(args.cwd, '.')

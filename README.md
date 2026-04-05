@@ -40,6 +40,8 @@
 | 🆕 | **LiteLLM Proxy Support** | Route through LiteLLM Proxy to any provider |
 | 🆕 | **OpenRouter Support** | Cloud API gateway — access OpenAI, Anthropic, Google models via one endpoint |
 | 🆕 | **Query Engine** | Runtime event counters, transcript summaries, orchestration reports |
+| 🆕 | **Remote Runtime** | Manifest-backed local remote profiles, connect/disconnect state, and remote CLI/slash flows |
+| 🆕 | **Daemon Commands** | Local `daemon start/ps/logs/attach/kill` wrapper over background agent sessions |
 | 🆕 | **Testing Guide** | Comprehensive [TESTING_GUIDE.md](TESTING_GUIDE.md) with commands for every feature |
 | 🆕 | **Parity Checklist** | Full [PARITY_CHECKLIST.md](PARITY_CHECKLIST.md) tracking implementation status vs npm source |
 
@@ -72,6 +74,7 @@ Built on the public porting workspace from [instructkr/claw-code](https://github
 | 🪆 **Nested Delegation** | Delegate subtasks to child agents with dependency-aware topological batching |
 | 📡 **Streaming** | Token-by-token streaming output with `--stream` |
 | 💬 **Slash Commands** | Local commands: `/help`, `/context`, `/tools`, `/memory`, `/status`, `/model`, and more |
+| 🌐 **Remote Runtime** | Manifest-backed remote profiles with local `remote-mode`, `ssh-mode`, `teleport-mode`, and connect/disconnect state |
 | 🧠 **Context Engine** | Automatic context building with CLAUDE.md discovery, compaction, and snipping |
 | 🔄 **Session Persistence** | Save and resume agent sessions with file-history replay |
 | 💰 **Cost & Budget Control** | Token budgets, cost limits, tool-call caps, model-call caps |
@@ -114,6 +117,8 @@ Built on the public porting workspace from [instructkr/claw-code](https://github
 - [x] File history journaling with snapshot IDs and replay summaries
 - [x] Nested agent delegation with dependency-aware topological batching
 - [x] Agent manager with lineage tracking and group membership
+- [x] Local daemon-style background command family
+- [x] Local remote runtime: manifest discovery, profile listing, connect/disconnect persistence, and CLI/slash flows
 - [x] Plugin runtime: manifest discovery, hooks, aliases, virtual tools, tool blocking
 - [x] Plugin lifecycle hooks: resume, persist, delegate phases
 - [x] Plugin session-state persistence and resume restoration
@@ -129,7 +134,7 @@ Built on the public porting workspace from [instructkr/claw-code](https://github
 - [ ] Full interactive REPL / TUI behavior
 - [ ] Exact tokenizer-accurate context accounting
 - [ ] Hooks system parity
-- [ ] Remote runtime modes (SSH, teleport, deep-link)
+- [ ] Real remote transport/runtime parity beyond the current local remote-profile runtime
 - [ ] Voice and VIM modes
 - [ ] Editor and platform integrations
 - [ ] Background and team features
@@ -164,6 +169,9 @@ claw-code/
 │   ├── session_store.py          # Session serialization & persistence
 │   ├── transcript.py             # Transcript block export & mutation tracking
 │   ├── query_engine.py           # Query engine facade & runtime orchestration
+│   ├── remote_runtime.py         # Local remote profiles, connect/disconnect state, remote CLI support
+│   ├── account_runtime.py        # Local account profiles, login/logout state, account CLI support
+│   ├── config_runtime.py         # Local workspace config/settings discovery and mutation
 │   ├── permissions.py            # Tool permission filtering
 │   ├── cost_tracker.py           # Cost & budget enforcement
 │   ├── tools.py                  # Mirrored tool inventory

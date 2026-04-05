@@ -75,12 +75,16 @@ python3 -m src.main agent "/help"
 python3 -m src.main agent "/commands"
 python3 -m src.main agent "/context" --cwd ..
 python3 -m src.main agent "/context-raw" --cwd ..
+python3 -m src.main agent "/search" --cwd ..
+python3 -m src.main agent "/remote" --cwd ..
+python3 -m src.main agent "/remotes" --cwd ..
 python3 -m src.main agent "/plan" --cwd ..
 python3 -m src.main agent "/prompt" --cwd ..
 python3 -m src.main agent "/permissions" --cwd ..
 python3 -m src.main agent "/hooks" --cwd ..
 python3 -m src.main agent "/policy" --cwd ..
 python3 -m src.main agent "/trust" --cwd ..
+python3 -m src.main agent "/task-next" --cwd ..
 python3 -m src.main agent "/tools" --cwd ..
 python3 -m src.main agent "/memory" --cwd ..
 python3 -m src.main agent "/status" --cwd ..
@@ -180,6 +184,89 @@ python3 -m src.main agent-context-raw --cwd ./test_cases
 python3 -m src.main agent-prompt --cwd ./test_cases
 ```
 
+### 4.9 Remote runtime context and prompt inspection
+
+Create a local remote manifest:
+
+```bash
+cat > ./test_cases/.claw-remote.json <<'EOF'
+{
+  "profiles": [
+    {
+      "name": "staging",
+      "mode": "ssh",
+      "target": "dev@staging",
+      "workspaceCwd": "/srv/app",
+      "sessionUrl": "wss://remote/session"
+    },
+    {
+      "name": "preview",
+      "mode": "deep-link",
+      "target": "preview://session"
+    }
+  ]
+}
+EOF
+```
+
+Inspect the runtime view:
+
+```bash
+python3 -m src.main agent "/remote" --cwd ./test_cases
+python3 -m src.main agent "/remotes" --cwd ./test_cases
+python3 -m src.main agent-context-raw --cwd ./test_cases
+python3 -m src.main agent-prompt --cwd ./test_cases
+```
+
+### 4.10 Search runtime context and prompt inspection
+
+Create a local search manifest:
+
+```bash
+cat > ./test_cases/.claw-search.json <<'EOF'
+{
+  "providers": [
+    {
+      "name": "local-search",
+      "provider": "searxng",
+      "baseUrl": "http://127.0.0.1:8080"
+    }
+  ]
+}
+EOF
+```
+
+Inspect the runtime view:
+
+```bash
+python3 -m src.main agent "/search" --cwd ./test_cases
+python3 -m src.main agent "/search providers" --cwd ./test_cases
+python3 -m src.main agent-context-raw --cwd ./test_cases
+python3 -m src.main agent-prompt --cwd ./test_cases
+```
+
+### 4.11 Tokenizer-aware context accounting
+
+Inspect which token counter backend the runtime is using:
+
+```bash
+python3 -m src.main agent "/status" --cwd ./test_cases
+python3 -m src.main agent-context --cwd ./test_cases
+```
+
+Force a local tokenizer path or model override for context accounting:
+
+```bash
+export CLAW_CODE_TOKENIZER_PATH=/path/to/local/tokenizer
+# or
+export CLAW_CODE_TOKENIZER_MODEL=Qwen/Qwen3-Coder-30B-A3B-Instruct
+
+python3 -m src.main agent "/status" --cwd ./test_cases
+python3 -m src.main agent-context --cwd ./test_cases
+```
+
+If no tokenizer backend is available, the runtime will fall back to a heuristic counter and `/status` will show that.
+
 ## 5. Core Agent Loop
 
 ### 5.1 Read-only run
@@ -223,6 +310,87 @@ python3 -m src.main agent-chat \
   --cwd ..
 ```
 
+## 6. Search Runtime And Real Web Search
+
+### 6.1 Configure a provider with a local manifest
+
+```bash
+cat > ./test_cases/.claw-search.json <<'EOF'
+{
+  "providers": [
+    {
+      "name": "local-search",
+      "provider": "searxng",
+      "baseUrl": "http://127.0.0.1:8080"
+    },
+    {
+      "name": "backup-search",
+      "provider": "tavily",
+      "apiKeyEnv": "TAVILY_API_KEY"
+    }
+  ]
+}
+EOF
+```
+
+### 6.2 Configure a provider from environment variables
+
+Use one of these:
+
+```bash
+export SEARXNG_BASE_URL=http://127.0.0.1:8080
+export BRAVE_SEARCH_API_KEY=your-brave-key
+export TAVILY_API_KEY=your-tavily-key
+```
+
+### 6.3 Inspect providers from the CLI
+
+```bash
+python3 -m src.main search-status --cwd ./test_cases
+python3 -m src.main search-providers --cwd ./test_cases
+python3 -m src.main search-status --cwd ./test_cases --provider local-search
+python3 -m src.main search-activate local-search --cwd ./test_cases
+```
+
+### 6.4 Run a real web search from the CLI
+
+```bash
+python3 -m src.main search \
+  "python argparse mutually exclusive group" \
+  --cwd ./test_cases \
+  --provider local-search \
+  --max-results 5
+```
+
+Limit results to specific domains:
+
+```bash
+python3 -m src.main search \
+  "OpenAI Responses API" \
+  --cwd ./test_cases \
+  --domain openai.com \
+  --domain platform.openai.com
+```
+
+### 6.5 Run a real web search through slash commands
+
+```bash
+python3 -m src.main agent "/search" --cwd ./test_cases
+python3 -m src.main agent "/search providers" --cwd ./test_cases
+python3 -m src.main agent "/search provider local-search" --cwd ./test_cases
+python3 -m src.main agent "/search use local-search" --cwd ./test_cases
+python3 -m src.main agent "/search python unittest mock patch examples" --cwd ./test_cases
+```
+
+### 6.6 Run a real web search through the model tool loop
+
+```bash
+python3 -m src.main agent \
+  "Use web_search to find Python unittest mocking references, then summarize the top results." \
+  --cwd ./test_cases \
+  --show-transcript
+```
+
 Inside chat mode:
 
 - type normal prompts to continue the same session
@@ -241,7 +409,7 @@ python3 -m src.main agent-chat \
 ### 6.1 Read files
 
 ```bash
-python3 -m src.main agent \ 
+python3 -m src.main agent \
   "Read claw-code-agent/src/agent_tools.py and summarize each tool." \
   --cwd ..
 ```
@@ -340,6 +508,15 @@ python3 -m src.main agent "/plan" --cwd ./test_cases
 python3 -m src.main agent "/tasks" --cwd ./test_cases
 ```
 
+### 6.9 Remote tools
+
+```bash
+python3 -m src.main agent \
+  "List the configured remote profiles, connect to staging, then report the active remote status." \
+  --cwd ./test_cases \
+  --show-transcript
+```
+
 ## 7. Session Persistence And Resume
 
 ### 7.1 Create a saved session
@@ -417,7 +594,38 @@ python3 -m src.main agent-attach <background-id> --tail 40
 python3 -m src.main agent-kill <background-id>
 ```
 
-## 9. Structured Output / JSON Schema
+### 8.6 Daemon-style wrappers
+
+```bash
+python3 -m src.main daemon start "/help" --cwd ./test_cases
+python3 -m src.main daemon ps
+python3 -m src.main daemon logs <background-id>
+python3 -m src.main daemon attach <background-id>
+python3 -m src.main daemon kill <background-id>
+```
+
+## 9. Remote Runtime CLI
+
+### 9.1 Remote mode commands
+
+```bash
+python3 -m src.main remote-mode staging --cwd ./test_cases
+python3 -m src.main ssh-mode staging --cwd ./test_cases
+python3 -m src.main teleport-mode preview --cwd ./test_cases
+python3 -m src.main direct-connect-mode direct://workspace --cwd ./test_cases
+python3 -m src.main deep-link-mode preview --cwd ./test_cases
+```
+
+### 9.2 Inspect and clear remote state
+
+```bash
+python3 -m src.main remote-status --cwd ./test_cases
+python3 -m src.main remote-profiles --cwd ./test_cases
+python3 -m src.main remote-disconnect --cwd ./test_cases
+python3 -m src.main remote-status --cwd ./test_cases
+```
+
+## 10. Structured Output / JSON Schema
 
 Create a schema file:
 
@@ -446,9 +654,9 @@ python3 -m src.main agent \
   --response-schema-strict
 ```
 
-## 10. Budgets And Limits
+## 11. Budgets And Limits
 
-### 10.1 Total token budget
+### 11.1 Total token budget
 
 ```bash
 python3 -m src.main agent \
@@ -457,7 +665,7 @@ python3 -m src.main agent \
   --max-total-tokens 50
 ```
 
-### 10.2 Input / output token budgets
+### 11.2 Input / output token budgets
 
 ```bash
 python3 -m src.main agent \
@@ -467,7 +675,7 @@ python3 -m src.main agent \
   --max-output-tokens 80
 ```
 
-### 10.3 Reasoning-token budget
+### 11.3 Reasoning-token budget
 
 ```bash
 python3 -m src.main agent \
@@ -476,7 +684,7 @@ python3 -m src.main agent \
   --max-reasoning-tokens 10
 ```
 
-### 10.4 Tool-call budget
+### 11.4 Tool-call budget
 
 ```bash
 python3 -m src.main agent \
@@ -485,7 +693,7 @@ python3 -m src.main agent \
   --max-tool-calls 1
 ```
 
-### 10.5 Delegated-task budget
+### 11.5 Delegated-task budget
 
 ```bash
 python3 -m src.main agent \
@@ -494,7 +702,7 @@ python3 -m src.main agent \
   --max-delegated-tasks 1
 ```
 
-### 10.6 Cost budget
+### 11.6 Cost budget
 
 ```bash
 python3 -m src.main agent \
@@ -505,7 +713,7 @@ python3 -m src.main agent \
   --max-budget-usd 0.000001
 ```
 
-### 10.7 Model-call budget
+### 11.7 Model-call budget
 
 ```bash
 python3 -m src.main agent \
@@ -514,7 +722,7 @@ python3 -m src.main agent \
   --max-model-calls 1
 ```
 
-### 10.8 Session-turn budget
+### 11.8 Session-turn budget
 
 ```bash
 python3 -m src.main agent \
@@ -523,7 +731,7 @@ python3 -m src.main agent \
   --max-session-turns 1
 ```
 
-### 10.9 Budget overrides from local policy
+### 11.9 Budget overrides from local policy
 
 ```bash
 cat > ./test_cases/.claw-policy.json <<'EOF'
@@ -541,9 +749,9 @@ python3 -m src.main agent \
 
 Expected result: the run stops with a model-call budget exceeded message even though you did not pass `--max-model-calls` on the CLI.
 
-## 11. Streaming, Continuation, And Context Reduction
+## 12. Streaming, Continuation, And Context Reduction
 
-### 11.1 Streaming assistant output
+### 12.1 Streaming assistant output
 
 ```bash
 python3 -m src.main agent \
@@ -553,7 +761,7 @@ python3 -m src.main agent \
   --show-transcript
 ```
 
-### 11.2 Automatic continuation after truncation
+### 12.2 Automatic continuation after truncation
 
 Use a small output budget so the backend is more likely to stop early:
 
@@ -565,7 +773,7 @@ python3 -m src.main agent \
   --show-transcript
 ```
 
-### 11.3 Snipping older context
+### 12.3 Snipping older context
 
 ```bash
 python3 -m src.main agent \
@@ -576,7 +784,7 @@ python3 -m src.main agent \
   --show-transcript
 ```
 
-### 11.4 Compaction boundaries
+### 12.4 Compaction boundaries
 
 ```bash
 python3 -m src.main agent \
@@ -587,9 +795,9 @@ python3 -m src.main agent \
   --show-transcript
 ```
 
-## 12. File History Replay
+## 13. File History Replay
 
-### 12.1 Create file history
+### 13.1 Create file history
 
 ```bash
 python3 -m src.main agent \
@@ -598,7 +806,7 @@ python3 -m src.main agent \
   --allow-write
 ```
 
-### 12.2 Resume and inspect replay
+### 13.2 Resume and inspect replay
 
 ```bash
 python3 -m src.main agent-resume \
@@ -610,9 +818,9 @@ python3 -m src.main agent-resume \
 
 Look for `file_history_replay` messages in the transcript.
 
-## 13. Nested Delegation
+## 14. Nested Delegation
 
-### 13.1 Basic delegated subtask
+### 14.1 Basic delegated subtask
 
 ```bash
 python3 -m src.main agent \
@@ -621,7 +829,7 @@ python3 -m src.main agent \
   --show-transcript
 ```
 
-### 13.2 Multiple delegated subtasks
+### 14.2 Multiple delegated subtasks
 
 ```bash
 python3 -m src.main agent \
@@ -630,7 +838,7 @@ python3 -m src.main agent \
   --show-transcript
 ```
 
-### 13.3 Resume a delegated child session
+### 14.3 Resume a delegated child session
 
 1. Seed a normal saved session:
 
@@ -649,7 +857,7 @@ python3 -m src.main agent \
   --show-transcript
 ```
 
-### 13.4 Topological dependency batches
+### 14.4 Topological dependency batches
 
 ```bash
 python3 -m src.main agent \
@@ -664,7 +872,7 @@ Look for:
 - `delegate_group_result`
 - `batch_index=...`
 
-## 14. Plugin Runtime
+## 15. Plugin Runtime
 
 Create a local plugin manifest:
 
@@ -705,14 +913,14 @@ cat > ./test_cases/plugins/demo/plugin.json <<'EOF'
 EOF
 ```
 
-### 14.1 Plugin prompt/context discovery
+### 15.1 Plugin prompt/context discovery
 
 ```bash
 python3 -m src.main agent-prompt --cwd ./test_cases
 python3 -m src.main agent-context-raw --cwd ./test_cases
 ```
 
-### 14.2 Plugin alias tool
+### 15.2 Plugin alias tool
 
 ```bash
 echo "hello plugin" > ./test_cases/hello.txt
@@ -722,7 +930,7 @@ python3 -m src.main agent \
   --show-transcript
 ```
 
-### 14.3 Plugin virtual tool
+### 15.3 Plugin virtual tool
 
 ```bash
 python3 -m src.main agent \
@@ -731,7 +939,7 @@ python3 -m src.main agent \
   --show-transcript
 ```
 
-### 14.4 Plugin before/after tool guidance
+### 15.4 Plugin before/after tool guidance
 
 ```bash
 python3 -m src.main agent \
@@ -740,7 +948,7 @@ python3 -m src.main agent \
   --show-transcript
 ```
 
-### 14.5 Plugin lifecycle with resume/persist
+### 15.5 Plugin lifecycle with resume/persist
 
 1. Start a session:
 
@@ -765,7 +973,7 @@ Look for:
 - `Plugin resume hooks:`
 - `Plugin runtime state:`
 
-## 15. MCP Runtime
+## 16. MCP Runtime
 
 Create a local MCP manifest:
 
@@ -796,7 +1004,7 @@ cat > ./test_cases_mcp/.claw-mcp.json <<'EOF'
 EOF
 ```
 
-### 15.1 MCP context and slash commands
+### 16.1 MCP context and slash commands
 
 ```bash
 python3 -m src.main agent "/mcp" --cwd ./test_cases_mcp
@@ -807,7 +1015,7 @@ python3 -m src.main agent-context-raw --cwd ./test_cases_mcp
 python3 -m src.main agent-prompt --cwd ./test_cases_mcp
 ```
 
-### 15.2 MCP tools through the model loop
+### 16.2 MCP tools through the model loop
 
 ```bash
 python3 -m src.main agent \
@@ -816,7 +1024,7 @@ python3 -m src.main agent \
   --show-transcript
 ```
 
-### 15.3 Read inline MCP resources
+### 16.3 Read inline MCP resources
 
 ```bash
 python3 -m src.main agent \
@@ -825,7 +1033,161 @@ python3 -m src.main agent \
   --show-transcript
 ```
 
-## 16. Task Runtime
+### 16.4 Real stdio MCP server transport
+
+Create a simple stdio MCP server:
+
+```bash
+cat > ./test_cases_mcp/fake_stdio_mcp.py <<'EOF'
+import json
+import sys
+
+RESOURCES = [
+    {
+        "uri": "mcp://remote/notes",
+        "name": "Remote Notes",
+        "mimeType": "text/plain",
+    }
+]
+TOOLS = [
+    {
+        "name": "echo",
+        "description": "Echo text",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "text": {"type": "string"}
+            }
+        }
+    }
+]
+
+for raw in sys.stdin:
+    raw = raw.strip()
+    if not raw:
+        continue
+    message = json.loads(raw)
+    method = message.get("method")
+    if method == "initialize":
+        print(json.dumps({
+            "jsonrpc": "2.0",
+            "id": message["id"],
+            "result": {
+                "protocolVersion": "2025-11-25",
+                "capabilities": {"resources": {}, "tools": {}},
+                "serverInfo": {"name": "fake-remote", "version": "1.0.0"}
+            }
+        }), flush=True)
+        continue
+    if method == "notifications/initialized":
+        continue
+    if method == "resources/list":
+        print(json.dumps({
+            "jsonrpc": "2.0",
+            "id": message["id"],
+            "result": {"resources": RESOURCES}
+        }), flush=True)
+        continue
+    if method == "resources/read":
+        uri = message.get("params", {}).get("uri")
+        print(json.dumps({
+            "jsonrpc": "2.0",
+            "id": message["id"],
+            "result": {
+                "contents": [
+                    {
+                        "uri": uri,
+                        "mimeType": "text/plain",
+                        "text": "remote notes via stdio"
+                    }
+                ]
+            }
+        }), flush=True)
+        continue
+    if method == "tools/list":
+        print(json.dumps({
+            "jsonrpc": "2.0",
+            "id": message["id"],
+            "result": {"tools": TOOLS}
+        }), flush=True)
+        continue
+    if method == "tools/call":
+        text = message.get("params", {}).get("arguments", {}).get("text", "")
+        print(json.dumps({
+            "jsonrpc": "2.0",
+            "id": message["id"],
+            "result": {
+                "content": [{"type": "text", "text": "echo:" + text}],
+                "isError": False
+            }
+        }), flush=True)
+        continue
+EOF
+```
+
+Add the stdio server to the MCP manifest:
+
+```bash
+cat > ./test_cases_mcp/.claw-mcp.json <<'EOF'
+{
+  "servers": [
+    {
+      "name": "workspace",
+      "resources": [
+        {
+          "uri": "mcp://workspace/notes",
+          "name": "Notes",
+          "path": "notes.txt",
+          "mimeType": "text/plain"
+        },
+        {
+          "uri": "mcp://workspace/inline",
+          "name": "Inline",
+          "text": "inline body"
+        }
+      ]
+    }
+  ],
+  "mcpServers": {
+    "remote": {
+      "command": "python3",
+      "args": ["-u", "./fake_stdio_mcp.py"]
+    }
+  }
+}
+EOF
+```
+
+### 16.5 MCP transport CLI commands
+
+```bash
+python3 -m src.main mcp-status --cwd ./test_cases_mcp
+python3 -m src.main mcp-resources --cwd ./test_cases_mcp
+python3 -m src.main mcp-resource mcp://remote/notes --cwd ./test_cases_mcp
+python3 -m src.main mcp-tools --cwd ./test_cases_mcp
+python3 -m src.main mcp-call-tool echo --arguments-json '{"text":"hello"}' --cwd ./test_cases_mcp
+```
+
+### 16.6 MCP transport slash commands
+
+```bash
+python3 -m src.main agent "/mcp" --cwd ./test_cases_mcp
+python3 -m src.main agent "/mcp tools" --cwd ./test_cases_mcp
+python3 -m src.main agent "/mcp tool echo" --cwd ./test_cases_mcp
+python3 -m src.main agent "/resources" --cwd ./test_cases_mcp
+python3 -m src.main agent "/resource mcp://remote/notes" --cwd ./test_cases_mcp
+```
+
+### 16.7 MCP transport tools through the model loop
+
+```bash
+python3 -m src.main agent \
+  "List the available MCP tools, call the remote echo tool with text=hello, then summarize the result." \
+  --cwd ./test_cases_mcp \
+  --show-transcript
+```
+
+## 17. Task Runtime
 
 Create a clean task workspace:
 
@@ -834,7 +1196,7 @@ mkdir -p ./test_cases_tasks
 rm -rf ./test_cases_tasks/.port_sessions
 ```
 
-### 16.1 Task slash commands
+### 17.1 Task slash commands
 
 ```bash
 python3 -m src.main agent "/tasks" --cwd ./test_cases_tasks
@@ -844,7 +1206,7 @@ python3 -m src.main agent-context-raw --cwd ./test_cases_tasks
 python3 -m src.main agent-prompt --cwd ./test_cases_tasks
 ```
 
-### 16.2 Create and update tasks through the model loop
+### 17.2 Create and update tasks through the model loop
 
 ```bash
 python3 -m src.main agent \
@@ -860,7 +1222,7 @@ Then inspect the stored task file:
 cat ./test_cases_tasks/.port_sessions/task_runtime.json
 ```
 
-### 16.3 Replace the todo list
+### 17.3 Replace the todo list
 
 ```bash
 python3 -m src.main agent \
@@ -870,17 +1232,18 @@ python3 -m src.main agent \
   --show-transcript
 ```
 
-### 16.4 Read back task state
+### 17.4 Read back task state
 
 ```bash
 python3 -m src.main agent "/tasks" --cwd ./test_cases_tasks
+python3 -m src.main agent "/task-next" --cwd ./test_cases_tasks
 python3 -m src.main agent \
   "List the current tasks and show me the id of each one." \
   --cwd ./test_cases_tasks \
   --show-transcript
 ```
 
-### 16.5 Plan runtime and task sync
+### 17.5 Plan runtime and task sync
 
 ```bash
 python3 -m src.main agent \
@@ -894,9 +1257,49 @@ python3 -m src.main agent "/tasks" --cwd ./test_cases_tasks
 cat ./test_cases_tasks/.port_sessions/plan_runtime.json
 ```
 
-## 17. Query Engine And Workspace Commands
+### 17.6 Dependency-aware task execution
 
-### 17.1 Workspace inventory
+Create a blocked task graph through the model loop:
+
+```bash
+python3 -m src.main agent \
+  "Use todo_write to create two tasks: scan with status pending, and patch with status blocked and blocked_by scan. Then show the next actionable tasks." \
+  --cwd ./test_cases_tasks \
+  --allow-write \
+  --show-transcript
+```
+
+Then advance the task state:
+
+```bash
+python3 -m src.main agent \
+  "Mark task scan as completed, then show the next actionable tasks and start task patch with active_form 'Patching files'." \
+  --cwd ./test_cases_tasks \
+  --allow-write \
+  --show-transcript
+```
+
+Inspect the resulting task state:
+
+```bash
+python3 -m src.main agent "/task-next" --cwd ./test_cases_tasks
+python3 -m src.main agent "/tasks" --cwd ./test_cases_tasks
+cat ./test_cases_tasks/.port_sessions/task_runtime.json
+```
+
+### 17.7 Task execution tools directly
+
+```bash
+python3 -m src.main agent \
+  "Use todo_write to create task scan and task patch where patch is blocked_by scan. Then use task_next, task_complete for scan, and task_start for patch." \
+  --cwd ./test_cases_tasks \
+  --allow-write \
+  --show-transcript
+```
+
+## 18. Query Engine And Workspace Commands
+
+### 18.1 Workspace inventory
 
 ```bash
 python3 -m src.main summary
@@ -906,7 +1309,7 @@ python3 -m src.main commands --limit 20
 python3 -m src.main tools --limit 20
 ```
 
-### 17.2 Query routing and bootstrap reports
+### 18.2 Query routing and bootstrap reports
 
 ```bash
 python3 -m src.main route "inspect the runtime and tools" --limit 10
@@ -914,23 +1317,11 @@ python3 -m src.main bootstrap "inspect the runtime and tools" --limit 10
 python3 -m src.main turn-loop "inspect the runtime and tools" --limit 5 --max-turns 3
 ```
 
-### 17.3 Session flushing for the mirrored workspace
+### 18.3 Session flushing for the mirrored workspace
 
 ```bash
 python3 -m src.main flush-transcript "store a temporary transcript"
 python3 -m src.main load-session <session-id>
-```
-
-## 18. Remote/Direct Mode Simulations
-
-These are mirrored workspace simulation commands, not the real agent runtime:
-
-```bash
-python3 -m src.main remote-mode demo-target
-python3 -m src.main ssh-mode demo-target
-python3 -m src.main teleport-mode demo-target
-python3 -m src.main direct-connect-mode demo-target
-python3 -m src.main deep-link-mode demo-target
 ```
 
 ## 19. Parity Tracking Workflow
@@ -950,3 +1341,105 @@ Rule for future work:
 
 - every new implemented feature should add a checked item in `PARITY_CHECKLIST.md`
 - every user-testable feature should add at least one concrete command example in `TESTING_GUIDE.md`
+
+## 20. Config Runtime
+
+Inspect local config state:
+
+```bash
+python3 -m src.main config-status --cwd ./test_cases
+python3 -m src.main config-effective --cwd ./test_cases
+```
+
+Read a value or a source directly:
+
+```bash
+python3 -m src.main config-get review.mode --cwd ./test_cases
+python3 -m src.main config-source project --cwd ./test_cases
+```
+
+Write a value into the local settings layer:
+
+```bash
+python3 -m src.main config-set review.mode '"strict"' --cwd ./test_cases
+python3 -m src.main config-set review.enabled true --cwd ./test_cases
+```
+
+Test the slash commands:
+
+```bash
+python3 -m src.main agent "/config" --cwd ./test_cases
+python3 -m src.main agent "/config effective" --cwd ./test_cases
+python3 -m src.main agent "/config get review.mode" --cwd ./test_cases
+python3 -m src.main agent "/settings source local" --cwd ./test_cases
+```
+
+Test the config tools through the real agent loop:
+
+```bash
+python3 -m src.main agent \
+  "List the current config keys, set review.mode to strict in local config, then read it back." \
+  --cwd ./test_cases \
+  --allow-write
+```
+
+## 21. Account Runtime
+
+Inspect local account state:
+
+```bash
+python3 -m src.main account-status --cwd ./test_cases
+python3 -m src.main account-profiles --cwd ./test_cases
+```
+
+Activate and clear a local account session:
+
+```bash
+python3 -m src.main account-login local --cwd ./test_cases
+python3 -m src.main account-logout --cwd ./test_cases
+```
+
+Test the slash commands:
+
+```bash
+python3 -m src.main agent "/account" --cwd ./test_cases
+python3 -m src.main agent "/account profiles" --cwd ./test_cases
+python3 -m src.main agent "/login local" --cwd ./test_cases
+python3 -m src.main agent "/logout" --cwd ./test_cases
+```
+
+Test the account tools through the real agent loop:
+
+```bash
+python3 -m src.main agent \
+  "List the configured account profiles, activate the local profile, then report the active account session." \
+  --cwd ./test_cases
+```
+
+## 22. Extended Tool Slice
+
+Test the new tool-surface additions through the real agent loop:
+
+```bash
+python3 -m src.main agent \
+  "Use tool_search to find file-related tools and summarize the best ones for reading and editing files." \
+  --cwd ./test_cases
+```
+
+```bash
+python3 -m src.main agent \
+  "Use web_fetch on file://$(pwd)/README.md and summarize the first section." \
+  --cwd .
+```
+
+```bash
+python3 -m src.main agent \
+  "Call the sleep tool for 0.1 seconds, then tell me it completed." \
+  --cwd ./test_cases
+```
+
+Run the direct unit tests for this slice:
+
+```bash
+python3 -m unittest tests.test_extended_tools -v
+```

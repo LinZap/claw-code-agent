@@ -35,6 +35,7 @@ class AgentContextUsageTests(unittest.TestCase):
 
         self.assertGreater(report.total_tokens, 0)
         self.assertIn('## Context Usage', rendered)
+        self.assertIn('**Token counter:**', rendered)
         self.assertIn('### System Prompt Sections', rendered)
         self.assertIn('### Message Breakdown', rendered)
         self.assertIn('#### Top Tools', rendered)

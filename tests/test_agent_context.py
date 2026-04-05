@@ -103,6 +103,71 @@ class AgentContextTests(unittest.TestCase):
         self.assertIn('mcpRuntime', snapshot.user_context)
         self.assertIn('Local MCP resources: 1', snapshot.user_context['mcpRuntime'])
 
+    def test_user_context_loads_search_runtime_summary(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            workspace = Path(tmp_dir) / 'repo'
+            workspace.mkdir(parents=True)
+            (workspace / '.claw-search.json').write_text(
+                '{"providers":[{"name":"local-search","provider":"searxng","baseUrl":"http://127.0.0.1:8080"}]}',
+                encoding='utf-8',
+            )
+
+            snapshot = build_context_snapshot(AgentRuntimeConfig(cwd=workspace))
+
+        self.assertIn('searchRuntime', snapshot.user_context)
+        self.assertIn('Configured search providers: 1', snapshot.user_context['searchRuntime'])
+        self.assertIn('local-search', snapshot.user_context['searchRuntime'])
+
+    def test_user_context_loads_remote_runtime_summary(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            workspace = Path(tmp_dir) / 'repo'
+            workspace.mkdir(parents=True)
+            (workspace / '.claw-remote.json').write_text(
+                (
+                    '{"profiles":[{"name":"staging","mode":"ssh","target":"dev@staging",'
+                    '"workspaceCwd":"/srv/app","sessionUrl":"wss://remote/session"}]}'
+                ),
+                encoding='utf-8',
+            )
+
+            snapshot = build_context_snapshot(AgentRuntimeConfig(cwd=workspace))
+
+        self.assertIn('remoteRuntime', snapshot.user_context)
+        self.assertIn('Configured remote profiles: 1', snapshot.user_context['remoteRuntime'])
+        self.assertIn('staging', snapshot.user_context['remoteRuntime'])
+
+    def test_user_context_loads_account_runtime_summary(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            workspace = Path(tmp_dir) / 'repo'
+            workspace.mkdir(parents=True)
+            (workspace / '.claw-account.json').write_text(
+                '{"profiles":[{"name":"local","provider":"openai","identity":"dev@example.com"}]}',
+                encoding='utf-8',
+            )
+
+            snapshot = build_context_snapshot(AgentRuntimeConfig(cwd=workspace))
+
+        self.assertIn('accountRuntime', snapshot.user_context)
+        self.assertIn('Configured account profiles: 1', snapshot.user_context['accountRuntime'])
+        self.assertIn('dev@example.com', snapshot.user_context['accountRuntime'])
+
+    def test_user_context_loads_config_runtime_summary(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            workspace = Path(tmp_dir) / 'repo'
+            workspace.mkdir(parents=True)
+            claude_dir = workspace / '.claude'
+            claude_dir.mkdir()
+            (claude_dir / 'settings.json').write_text(
+                '{"review":{"mode":"strict"}}',
+                encoding='utf-8',
+            )
+
+            snapshot = build_context_snapshot(AgentRuntimeConfig(cwd=workspace))
+
+        self.assertIn('configRuntime', snapshot.user_context)
+        self.assertIn('Config sources: 1', snapshot.user_context['configRuntime'])
+        self.assertIn('Effective keys: 2', snapshot.user_context['configRuntime'])
+
     def test_user_context_loads_task_runtime_summary(self) -> None:
         with tempfile.TemporaryDirectory() as tmp_dir:
             workspace = Path(tmp_dir) / 'repo'

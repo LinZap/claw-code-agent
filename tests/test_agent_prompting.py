@@ -125,6 +125,88 @@ class AgentPromptingTests(unittest.TestCase):
         prompt = render_system_prompt(parts)
         self.assertIn('# MCP', prompt)
 
+    def test_prompt_builder_mentions_search_when_runtime_is_loaded(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            workspace = Path(tmp_dir)
+            (workspace / '.claw-search.json').write_text(
+                '{"providers":[{"name":"local-search","provider":"searxng","baseUrl":"http://127.0.0.1:8080"}]}',
+                encoding='utf-8',
+            )
+            runtime_config = AgentRuntimeConfig(cwd=workspace)
+            model_config = ModelConfig(model='Qwen/Qwen3-Coder-30B-A3B-Instruct')
+            prompt_context = build_prompt_context(runtime_config, model_config)
+            parts = build_system_prompt_parts(
+                prompt_context=prompt_context,
+                runtime_config=runtime_config,
+                tools=default_tool_registry(),
+            )
+
+        prompt = render_system_prompt(parts)
+        self.assertIn('# Search', prompt)
+        self.assertIn('web_search', prompt)
+
+    def test_prompt_builder_mentions_remote_when_manifest_is_loaded(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            workspace = Path(tmp_dir)
+            (workspace / '.claw-remote.json').write_text(
+                (
+                    '{"profiles":[{"name":"staging","mode":"ssh","target":"dev@staging",'
+                    '"workspaceCwd":"/srv/app"}]}'
+                ),
+                encoding='utf-8',
+            )
+            runtime_config = AgentRuntimeConfig(cwd=workspace)
+            model_config = ModelConfig(model='Qwen/Qwen3-Coder-30B-A3B-Instruct')
+            prompt_context = build_prompt_context(runtime_config, model_config)
+            parts = build_system_prompt_parts(
+                prompt_context=prompt_context,
+                runtime_config=runtime_config,
+                tools=default_tool_registry(),
+            )
+
+        prompt = render_system_prompt(parts)
+        self.assertIn('# Remote', prompt)
+
+    def test_prompt_builder_mentions_account_when_runtime_is_loaded(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            workspace = Path(tmp_dir)
+            (workspace / '.claw-account.json').write_text(
+                '{"profiles":[{"name":"local","provider":"openai","identity":"dev@example.com"}]}',
+                encoding='utf-8',
+            )
+            runtime_config = AgentRuntimeConfig(cwd=workspace)
+            model_config = ModelConfig(model='Qwen/Qwen3-Coder-30B-A3B-Instruct')
+            prompt_context = build_prompt_context(runtime_config, model_config)
+            parts = build_system_prompt_parts(
+                prompt_context=prompt_context,
+                runtime_config=runtime_config,
+                tools=default_tool_registry(),
+            )
+
+        prompt = render_system_prompt(parts)
+        self.assertIn('# Account', prompt)
+
+    def test_prompt_builder_mentions_config_when_runtime_is_loaded(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            workspace = Path(tmp_dir)
+            claude_dir = workspace / '.claude'
+            claude_dir.mkdir()
+            (claude_dir / 'settings.json').write_text(
+                '{"review":{"mode":"strict"}}',
+                encoding='utf-8',
+            )
+            runtime_config = AgentRuntimeConfig(cwd=workspace)
+            model_config = ModelConfig(model='Qwen/Qwen3-Coder-30B-A3B-Instruct')
+            prompt_context = build_prompt_context(runtime_config, model_config)
+            parts = build_system_prompt_parts(
+                prompt_context=prompt_context,
+                runtime_config=runtime_config,
+                tools=default_tool_registry(),
+            )
+
+        prompt = render_system_prompt(parts)
+        self.assertIn('# Config', prompt)
+
     def test_prompt_builder_mentions_tasks_when_runtime_is_loaded(self) -> None:
         with tempfile.TemporaryDirectory() as tmp_dir:
             workspace = Path(tmp_dir)

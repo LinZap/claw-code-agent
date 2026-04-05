@@ -115,6 +115,66 @@ def get_slash_command_specs() -> tuple[SlashCommandSpec, ...]:
             handler=_handle_mcp,
         ),
         SlashCommandSpec(
+            names=('search',),
+            description='Show search runtime status, list or activate providers, or run a real web search query.',
+            handler=_handle_search,
+        ),
+        SlashCommandSpec(
+            names=('remote',),
+            description='Show local remote runtime status or activate a remote target/profile.',
+            handler=_handle_remote,
+        ),
+        SlashCommandSpec(
+            names=('account',),
+            description='Show local account runtime status or configured account profiles.',
+            handler=_handle_account,
+        ),
+        SlashCommandSpec(
+            names=('login',),
+            description='Activate a local account profile or ephemeral identity.',
+            handler=_handle_login,
+        ),
+        SlashCommandSpec(
+            names=('logout',),
+            description='Clear the active local account session.',
+            handler=_handle_logout,
+        ),
+        SlashCommandSpec(
+            names=('config', 'settings'),
+            description='Show local config runtime state, effective config, config sources, or a config value.',
+            handler=_handle_config,
+        ),
+        SlashCommandSpec(
+            names=('remotes',),
+            description='List configured local remote profiles.',
+            handler=_handle_remotes,
+        ),
+        SlashCommandSpec(
+            names=('ssh',),
+            description='Activate a local SSH remote target/profile.',
+            handler=_handle_ssh,
+        ),
+        SlashCommandSpec(
+            names=('teleport',),
+            description='Activate a local teleport remote target/profile.',
+            handler=_handle_teleport,
+        ),
+        SlashCommandSpec(
+            names=('direct-connect',),
+            description='Activate a local direct-connect remote target/profile.',
+            handler=_handle_direct_connect,
+        ),
+        SlashCommandSpec(
+            names=('deep-link',),
+            description='Activate a local deep-link remote target/profile.',
+            handler=_handle_deep_link,
+        ),
+        SlashCommandSpec(
+            names=('disconnect', 'remote-disconnect'),
+            description='Disconnect the active local remote runtime target.',
+            handler=_handle_remote_disconnect,
+        ),
+        SlashCommandSpec(
             names=('resources',),
             description='List local MCP resources, optionally filtered by a query string.',
             handler=_handle_resources,
@@ -128,6 +188,11 @@ def get_slash_command_specs() -> tuple[SlashCommandSpec, ...]:
             names=('tasks', 'todo'),
             description='Show the local runtime task list, optionally filtered by status.',
             handler=_handle_tasks,
+        ),
+        SlashCommandSpec(
+            names=('task-next', 'next-task'),
+            description='Show the next actionable tasks from the local runtime task list.',
+            handler=_handle_task_next,
         ),
         SlashCommandSpec(
             names=('plan', 'planner'),
@@ -221,8 +286,131 @@ def _handle_context_raw(agent: 'LocalCodingAgent', _args: str, input_text: str) 
 
 
 def _handle_mcp(agent: 'LocalCodingAgent', args: str, input_text: str) -> SlashCommandResult:
+    command = args.strip()
+    if not command:
+        return _local_result(input_text, agent.render_mcp_report())
+    if command == 'tools':
+        return _local_result(input_text, agent.render_mcp_tools_report())
+    if command.startswith('tools '):
+        query = command.split(' ', 1)[1].strip()
+        return _local_result(input_text, agent.render_mcp_tools_report(query or None))
+    if command.startswith('tool '):
+        tool_name = command.split(' ', 1)[1].strip()
+        if not tool_name:
+            return _local_result(input_text, 'Usage: /mcp tool <tool-name>')
+        return _local_result(input_text, agent.render_mcp_call_tool_report(tool_name))
+    return _local_result(input_text, agent.render_mcp_report(command))
+
+
+def _handle_search(agent: 'LocalCodingAgent', args: str, input_text: str) -> SlashCommandResult:
+    command = args.strip()
+    if not command:
+        return _local_result(input_text, agent.render_search_report())
+    if command == 'providers':
+        return _local_result(input_text, agent.render_search_providers_report())
+    if command.startswith('providers '):
+        query = command.split(' ', 1)[1].strip()
+        return _local_result(input_text, agent.render_search_providers_report(query or None))
+    if command.startswith('provider '):
+        provider = command.split(' ', 1)[1].strip()
+        if not provider:
+            return _local_result(input_text, 'Usage: /search provider <name>')
+        return _local_result(input_text, agent.render_search_report(provider=provider))
+    if command.startswith('use '):
+        provider = command.split(' ', 1)[1].strip()
+        if not provider:
+            return _local_result(input_text, 'Usage: /search use <name>')
+        return _local_result(input_text, agent.render_search_activate_report(provider))
+    return _local_result(input_text, agent.render_search_report(command))
+
+
+def _handle_remote(agent: 'LocalCodingAgent', args: str, input_text: str) -> SlashCommandResult:
+    target = args or None
+    return _local_result(input_text, agent.render_remote_report(target))
+
+
+def _handle_account(agent: 'LocalCodingAgent', args: str, input_text: str) -> SlashCommandResult:
+    command = args.strip()
+    if not command:
+        return _local_result(input_text, agent.render_account_report())
+    if command == 'profiles':
+        return _local_result(input_text, agent.render_account_profiles_report())
+    if command.startswith('profile '):
+        profile = command.split(' ', 1)[1].strip()
+        if not profile:
+            return _local_result(input_text, 'Usage: /account profile <name>')
+        return _local_result(input_text, agent.render_account_report(profile))
+    return _local_result(input_text, 'Usage: /account [profiles|profile <name>]')
+
+
+def _handle_login(agent: 'LocalCodingAgent', args: str, input_text: str) -> SlashCommandResult:
+    target = args.strip()
+    if not target:
+        return _local_result(input_text, 'Usage: /login <profile-or-identity>')
+    return _local_result(input_text, agent.render_account_login_report(target))
+
+
+def _handle_logout(agent: 'LocalCodingAgent', _args: str, input_text: str) -> SlashCommandResult:
+    return _local_result(input_text, agent.render_account_logout_report())
+
+
+def _handle_config(agent: 'LocalCodingAgent', args: str, input_text: str) -> SlashCommandResult:
+    command = args.strip()
+    if not command:
+        return _local_result(input_text, agent.render_config_report())
+    if command == 'effective':
+        return _local_result(input_text, agent.render_config_effective_report())
+    if command.startswith('source '):
+        source = command.split(' ', 1)[1].strip()
+        if not source:
+            return _local_result(input_text, 'Usage: /config source <source-name>')
+        return _local_result(input_text, agent.render_config_source_report(source))
+    if command.startswith('get '):
+        key_path = command.split(' ', 1)[1].strip()
+        if not key_path:
+            return _local_result(input_text, 'Usage: /config get <key-path>')
+        return _local_result(input_text, agent.render_config_value_report(key_path))
+    return _local_result(
+        input_text,
+        'Usage: /config [effective|source <name>|get <key-path>]',
+    )
+
+
+def _handle_remotes(agent: 'LocalCodingAgent', args: str, input_text: str) -> SlashCommandResult:
     query = args or None
-    return _local_result(input_text, agent.render_mcp_report(query))
+    return _local_result(input_text, agent.render_remote_profiles_report(query))
+
+
+def _handle_ssh(agent: 'LocalCodingAgent', args: str, input_text: str) -> SlashCommandResult:
+    if not args:
+        return _local_result(input_text, 'Usage: /ssh <target-or-profile>')
+    return _local_result(input_text, agent.render_remote_mode_report(args, mode='ssh'))
+
+
+def _handle_teleport(agent: 'LocalCodingAgent', args: str, input_text: str) -> SlashCommandResult:
+    if not args:
+        return _local_result(input_text, 'Usage: /teleport <target-or-profile>')
+    return _local_result(input_text, agent.render_remote_mode_report(args, mode='teleport'))
+
+
+def _handle_direct_connect(agent: 'LocalCodingAgent', args: str, input_text: str) -> SlashCommandResult:
+    if not args:
+        return _local_result(input_text, 'Usage: /direct-connect <target-or-profile>')
+    return _local_result(input_text, agent.render_remote_mode_report(args, mode='direct-connect'))
+
+
+def _handle_deep_link(agent: 'LocalCodingAgent', args: str, input_text: str) -> SlashCommandResult:
+    if not args:
+        return _local_result(input_text, 'Usage: /deep-link <target-or-profile>')
+    return _local_result(input_text, agent.render_remote_mode_report(args, mode='deep-link'))
+
+
+def _handle_remote_disconnect(
+    agent: 'LocalCodingAgent',
+    _args: str,
+    input_text: str,
+) -> SlashCommandResult:
+    return _local_result(input_text, agent.render_remote_disconnect_report())
 
 
 def _handle_resources(agent: 'LocalCodingAgent', args: str, input_text: str) -> SlashCommandResult:
@@ -239,6 +427,10 @@ def _handle_resource(agent: 'LocalCodingAgent', args: str, input_text: str) -> S
 def _handle_tasks(agent: 'LocalCodingAgent', args: str, input_text: str) -> SlashCommandResult:
     status = args or None
     return _local_result(input_text, agent.render_tasks_report(status))
+
+
+def _handle_task_next(agent: 'LocalCodingAgent', _args: str, input_text: str) -> SlashCommandResult:
+    return _local_result(input_text, agent.render_next_tasks_report())
 
 
 def _handle_plan(agent: 'LocalCodingAgent', _args: str, input_text: str) -> SlashCommandResult:

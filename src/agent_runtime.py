@@ -7,9 +7,12 @@ from pathlib import Path
 from typing import Any
 from uuid import uuid4
 
+from .account_runtime import AccountRuntime
 from .agent_manager import AgentManager
+from .agent_context import clear_context_caches
 from .agent_context import render_context_report as render_agent_context_report
 from .agent_context_usage import collect_context_usage, estimate_tokens, format_context_usage
+from .config_runtime import ConfigRuntime
 from .hook_policy import HookPolicyRuntime
 from .mcp_runtime import MCPRuntime
 from .agent_prompting import (
@@ -42,7 +45,10 @@ from .agent_types import (
 from .openai_compat import OpenAICompatClient, OpenAICompatError
 from .plan_runtime import PlanRuntime
 from .plugin_runtime import PluginRuntime
+from .remote_runtime import RemoteRuntime
+from .search_runtime import SearchRuntime
 from .task_runtime import TaskRuntime
+from .tokenizer_runtime import describe_token_counter
 from .session_store import (
     StoredAgentSession,
     load_agent_session,
@@ -75,6 +81,10 @@ class LocalCodingAgent:
     plugin_runtime: PluginRuntime | None = None
     hook_policy_runtime: HookPolicyRuntime | None = None
     mcp_runtime: MCPRuntime | None = None
+    remote_runtime: RemoteRuntime | None = None
+    search_runtime: SearchRuntime | None = None
+    account_runtime: AccountRuntime | None = None
+    config_runtime: ConfigRuntime | None = None
     plan_runtime: PlanRuntime | None = None
     task_runtime: TaskRuntime | None = None
     last_session: AgentSessionState | None = field(default=None, init=False, repr=False)
@@ -104,6 +114,23 @@ class LocalCodingAgent:
                 self.runtime_config.cwd,
                 tuple(str(path) for path in self.runtime_config.additional_working_directories),
             )
+        if self.remote_runtime is None:
+            self.remote_runtime = RemoteRuntime.from_workspace(
+                self.runtime_config.cwd,
+                tuple(str(path) for path in self.runtime_config.additional_working_directories),
+            )
+        if self.search_runtime is None:
+            self.search_runtime = SearchRuntime.from_workspace(
+                self.runtime_config.cwd,
+                tuple(str(path) for path in self.runtime_config.additional_working_directories),
+            )
+        if self.account_runtime is None:
+            self.account_runtime = AccountRuntime.from_workspace(
+                self.runtime_config.cwd,
+                tuple(str(path) for path in self.runtime_config.additional_working_directories),
+            )
+        if self.config_runtime is None:
+            self.config_runtime = ConfigRuntime.from_workspace(self.runtime_config.cwd)
         if self.plan_runtime is None:
             self.plan_runtime = PlanRuntime.from_workspace(self.runtime_config.cwd)
         if self.task_runtime is None:
@@ -120,12 +147,17 @@ class LocalCodingAgent:
         self.client = OpenAICompatClient(self.model_config)
         self.tool_context = build_tool_context(
             self.runtime_config,
+            tool_registry=self.tool_registry,
             extra_env=(
                 self.hook_policy_runtime.safe_env()
                 if self.hook_policy_runtime is not None
                 else None
             ),
+            search_runtime=self.search_runtime,
+            account_runtime=self.account_runtime,
+            config_runtime=self.config_runtime,
             mcp_runtime=self.mcp_runtime,
+            remote_runtime=self.remote_runtime,
             plan_runtime=self.plan_runtime,
             task_runtime=self.task_runtime,
         )
@@ -919,6 +951,7 @@ class LocalCodingAgent:
                             'preflight_count': len(plugin_preflight_messages),
                         }
                     )
+                self._refresh_runtime_views_for_tool_result(tool_call.name, tool_result)
                 history_entry = self._build_file_history_entry(
                     tool_call=tool_call,
                     tool_result=tool_result,
@@ -1270,9 +1303,9 @@ class LocalCodingAgent:
             if current_total <= target_tokens and not reactive:
                 break
             message = session.messages[index]
-            original_tokens = estimate_tokens(message.content)
+            original_tokens = estimate_tokens(message.content, self.model_config.model)
             replacement = self._build_snipped_message_content(message)
-            replacement_tokens = estimate_tokens(replacement)
+            replacement_tokens = estimate_tokens(replacement, self.model_config.model)
             if replacement_tokens >= original_tokens:
                 continue
             session.tombstone_message(
@@ -2832,27 +2865,193 @@ class LocalCodingAgent:
             return '# Memory\n\nNo CLAUDE.md memory files are currently loaded.'
         return '\n'.join(['# Memory', '', claude_md])
 
+    def render_account_report(self, profile: str | None = None) -> str:
+        if self.account_runtime is None:
+            return '# Account\n\nNo local account runtime is available.'
+        if profile:
+            return self.account_runtime.render_profile(profile)
+        return '\n'.join(['# Account', '', self.account_runtime.render_summary()])
+
+    def render_search_report(
+        self,
+        query: str | None = None,
+        *,
+        provider: str | None = None,
+        max_results: int = 5,
+        domains: tuple[str, ...] = (),
+    ) -> str:
+        if self.search_runtime is None or not self.search_runtime.has_search_runtime():
+            return (
+                '# Search\n\nNo local search provider is available. '
+                'Add a .claw-search.json or .claude/search.json manifest, '
+                'or set SEARXNG_BASE_URL, BRAVE_SEARCH_API_KEY, or TAVILY_API_KEY.'
+            )
+        if query:
+            try:
+                return self.search_runtime.render_search_results(
+                    query,
+                    provider_name=provider,
+                    max_results=max_results,
+                    domains=domains,
+                    timeout_seconds=self.runtime_config.command_timeout_seconds,
+                )
+            except (KeyError, LookupError, OSError, ValueError) as exc:
+                return f'# Search\n\nSearch failed: {exc}'
+        if provider:
+            return self.search_runtime.render_provider(provider)
+        return '\n'.join(['# Search', '', self.search_runtime.render_summary()])
+
+    def render_search_providers_report(self, query: str | None = None) -> str:
+        if self.search_runtime is None or not self.search_runtime.has_search_runtime():
+            return '# Search Providers\n\nNo local search providers discovered.'
+        return self.search_runtime.render_providers_index(query=query)
+
+    def render_search_activate_report(self, provider: str) -> str:
+        if self.search_runtime is None or not self.search_runtime.has_search_runtime():
+            return '# Search\n\nNo local search provider is available.'
+        try:
+            report = self.search_runtime.activate_provider(provider)
+        except KeyError:
+            return f'# Search\n\nUnknown search provider: {provider}'
+        clear_context_caches()
+        self.tool_context = replace(
+            self.tool_context,
+            search_runtime=self.search_runtime,
+        )
+        return '\n'.join(['# Search', '', report.as_text()])
+
+    def render_account_profiles_report(self, query: str | None = None) -> str:
+        if self.account_runtime is None:
+            return '# Account Profiles\n\nNo local account runtime is available.'
+        return self.account_runtime.render_profiles_index(query=query)
+
+    def render_account_login_report(
+        self,
+        target: str,
+        *,
+        provider: str | None = None,
+        auth_mode: str | None = None,
+    ) -> str:
+        if self.account_runtime is None:
+            return '# Account\n\nNo local account runtime is available.'
+        report = self.account_runtime.login(target, provider=provider, auth_mode=auth_mode)
+        clear_context_caches()
+        return '\n'.join(['# Account', '', report.as_text()])
+
+    def render_account_logout_report(self) -> str:
+        if self.account_runtime is None:
+            return '# Account\n\nNo local account runtime is available.'
+        report = self.account_runtime.logout(reason='slash_or_cli_logout')
+        clear_context_caches()
+        return '\n'.join(['# Account', '', report.as_text()])
+
+    def render_config_report(self) -> str:
+        if self.config_runtime is None:
+            return '# Config\n\nNo local config runtime is available.'
+        return '\n'.join(['# Config', '', self.config_runtime.render_summary()])
+
+    def render_config_effective_report(self) -> str:
+        if self.config_runtime is None:
+            return '# Config Effective\n\nNo local config runtime is available.'
+        return '\n'.join(['# Config Effective', '', self.config_runtime.render_effective_config()])
+
+    def render_config_source_report(self, source: str) -> str:
+        if self.config_runtime is None:
+            return '# Config Source\n\nNo local config runtime is available.'
+        return '\n'.join(['# Config Source', '', self.config_runtime.render_source(source)])
+
+    def render_config_value_report(self, key_path: str, source: str | None = None) -> str:
+        if self.config_runtime is None:
+            return '# Config Value\n\nNo local config runtime is available.'
+        try:
+            rendered = self.config_runtime.render_value(key_path, source=source)
+        except KeyError as exc:
+            label = source if source is not None else key_path
+            return f'# Config Value\n\nUnknown config key or source: {label or exc.args[0]}'
+        return '\n'.join(['# Config Value', '', rendered])
+
     def render_mcp_report(self, query: str | None = None) -> str:
         if self.mcp_runtime is None:
-            return '# MCP\n\nNo local MCP manifests or resources discovered.'
+            return '# MCP\n\nNo local MCP manifests, servers, or resources discovered.'
         if query:
             return self.mcp_runtime.render_resource_index(query=query)
         return '\n'.join(['# MCP', '', self.mcp_runtime.render_summary()])
 
+    def render_remote_report(self, target: str | None = None) -> str:
+        if self.remote_runtime is None:
+            return '# Remote\n\nNo local remote runtime is available.'
+        if target:
+            report = self.remote_runtime.connect(target)
+            clear_context_caches()
+            return '\n'.join(['# Remote', '', report.as_text()])
+        return '\n'.join(['# Remote', '', self.remote_runtime.render_summary()])
+
+    def render_remote_mode_report(self, target: str, *, mode: str) -> str:
+        if self.remote_runtime is None:
+            return '# Remote\n\nNo local remote runtime is available.'
+        report = self.remote_runtime.connect(target, mode=mode)
+        clear_context_caches()
+        return '\n'.join(['# Remote', '', report.as_text()])
+
+    def render_remote_profiles_report(self, query: str | None = None) -> str:
+        if self.remote_runtime is None:
+            return '# Remote Profiles\n\nNo local remote runtime is available.'
+        return self.remote_runtime.render_profiles_index(query=query)
+
+    def render_remote_disconnect_report(self) -> str:
+        if self.remote_runtime is None:
+            return '# Remote\n\nNo local remote runtime is available.'
+        report = self.remote_runtime.disconnect()
+        clear_context_caches()
+        return '\n'.join(['# Remote', '', report.as_text()])
+
     def render_mcp_resources_report(self, query: str | None = None) -> str:
         if self.mcp_runtime is None:
-            return '# MCP Resources\n\nNo local MCP manifests or resources discovered.'
+            return '# MCP Resources\n\nNo local MCP manifests, servers, or resources discovered.'
         return self.mcp_runtime.render_resource_index(query=query)
 
     def render_mcp_resource_report(self, uri: str) -> str:
         if self.mcp_runtime is None:
-            return '# MCP Resource\n\nNo local MCP manifests or resources discovered.'
+            return '# MCP Resource\n\nNo local MCP manifests, servers, or resources discovered.'
         return self.mcp_runtime.render_resource(uri)
+
+    def render_mcp_tools_report(
+        self,
+        query: str | None = None,
+        *,
+        server: str | None = None,
+    ) -> str:
+        if self.mcp_runtime is None:
+            return '# MCP Tools\n\nNo local MCP manifests, servers, or resources discovered.'
+        return self.mcp_runtime.render_tool_index(query=query, server_name=server)
+
+    def render_mcp_call_tool_report(
+        self,
+        tool_name: str,
+        *,
+        arguments: dict[str, Any] | None = None,
+        server: str | None = None,
+    ) -> str:
+        if self.mcp_runtime is None:
+            return '# MCP Tool Result\n\nNo local MCP manifests, servers, or resources discovered.'
+        try:
+            return self.mcp_runtime.render_tool_call(
+                tool_name,
+                arguments=arguments,
+                server_name=server,
+            )
+        except FileNotFoundError as exc:
+            return f'# MCP Tool Result\n\n{exc}'
 
     def render_tasks_report(self, status: str | None = None) -> str:
         if self.task_runtime is None:
             return '# Tasks\n\nNo local task runtime is available.'
         return self.task_runtime.render_tasks(status=status)
+
+    def render_next_tasks_report(self) -> str:
+        if self.task_runtime is None:
+            return '# Next Tasks\n\nNo local task runtime is available.'
+        return self.task_runtime.render_next_tasks()
 
     def render_plan_report(self) -> str:
         if self.plan_runtime is None:
@@ -2891,10 +3090,12 @@ class LocalCodingAgent:
         return '\n'.join(lines)
 
     def render_status_report(self) -> str:
+        token_counter = describe_token_counter(self.model_config.model)
         lines = [
             '# Status',
             '',
             f'- Model: {self.model_config.model}',
+            f'- Token counter: {token_counter.backend} ({token_counter.source})',
             f'- Registered tools: {len(self.tool_registry)}',
             f'- Streaming model responses: {self.runtime_config.stream_model_responses}',
             f'- Session ID: {self.active_session_id or "none"}',
@@ -2904,8 +3105,37 @@ class LocalCodingAgent:
             lines.append(
                 f'- Workspace trust mode: {"trusted" if self.hook_policy_runtime.is_trusted() else "untrusted"}'
             )
-        if self.mcp_runtime is not None and self.mcp_runtime.resources:
-            lines.append(f'- MCP resources: {len(self.mcp_runtime.resources)}')
+        if self.mcp_runtime is not None:
+            if self.mcp_runtime.resources:
+                lines.append(f'- MCP local resources: {len(self.mcp_runtime.resources)}')
+            if self.mcp_runtime.servers:
+                lines.append(f'- MCP servers: {len(self.mcp_runtime.servers)}')
+        if self.remote_runtime is not None and self.remote_runtime.has_remote_config():
+            lines.append(f'- Remote profiles: {len(self.remote_runtime.profiles)}')
+            if self.remote_runtime.active_connection is not None:
+                connection = self.remote_runtime.active_connection
+                lines.append(
+                    f'- Active remote: {connection.mode} -> {connection.target}'
+                )
+        if self.search_runtime is not None and self.search_runtime.has_search_runtime():
+            lines.append(f'- Search providers: {len(self.search_runtime.providers)}')
+            active_provider = self.search_runtime.current_provider()
+            if active_provider is not None:
+                lines.append(
+                    f'- Active search provider: {active_provider.name} ({active_provider.provider})'
+                )
+        if self.account_runtime is not None and self.account_runtime.has_account_state():
+            lines.append(f'- Account profiles: {len(self.account_runtime.profiles)}')
+            if self.account_runtime.active_session is not None:
+                session = self.account_runtime.active_session
+                lines.append(
+                    f'- Active account: {session.provider} -> {session.identity}'
+                )
+        if self.config_runtime is not None and self.config_runtime.has_config():
+            lines.append(f'- Config sources: {len(self.config_runtime.sources)}')
+            lines.append(
+                f'- Effective config keys: {len(self.config_runtime.list_keys())}'
+            )
         if self.plan_runtime is not None and self.plan_runtime.steps:
             lines.append(f'- Local plan steps: {len(self.plan_runtime.steps)}')
         if self.task_runtime is not None and self.task_runtime.tasks:
@@ -2944,6 +3174,68 @@ class LocalCodingAgent:
             stop_reason=result.stop_reason,
         )
         self.resume_source_session_id = None
+
+    def _refresh_runtime_views_for_tool_result(
+        self,
+        tool_name: str,
+        tool_result: ToolExecutionResult,
+    ) -> None:
+        if not tool_result.ok:
+            return
+        refresh_tool_names = {
+            'update_plan',
+            'plan_clear',
+            'task_create',
+            'task_update',
+            'task_start',
+            'task_complete',
+            'task_block',
+            'task_cancel',
+            'todo_write',
+            'search_activate_provider',
+            'remote_connect',
+            'remote_disconnect',
+            'account_login',
+            'account_logout',
+            'config_set',
+        }
+        if tool_name not in refresh_tool_names:
+            return
+        clear_context_caches()
+        additional_dirs = tuple(
+            str(path) for path in self.runtime_config.additional_working_directories
+        )
+        if tool_name.startswith('remote_'):
+            self.remote_runtime = RemoteRuntime.from_workspace(
+                self.runtime_config.cwd,
+                additional_working_directories=additional_dirs,
+            )
+        if tool_name.startswith('search_'):
+            self.search_runtime = SearchRuntime.from_workspace(
+                self.runtime_config.cwd,
+                additional_working_directories=additional_dirs,
+            )
+        if tool_name.startswith('account_'):
+            self.account_runtime = AccountRuntime.from_workspace(
+                self.runtime_config.cwd,
+                additional_working_directories=additional_dirs,
+            )
+        if tool_name == 'config_set':
+            self.config_runtime = ConfigRuntime.from_workspace(self.runtime_config.cwd)
+        if tool_name.startswith('task_') or tool_name == 'todo_write':
+            self.task_runtime = TaskRuntime.from_workspace(self.runtime_config.cwd)
+        if tool_name.startswith('plan_') or tool_name == 'update_plan':
+            self.plan_runtime = PlanRuntime.from_workspace(self.runtime_config.cwd)
+        self.tool_context = replace(
+            self.tool_context,
+            tool_registry=self.tool_registry,
+            search_runtime=self.search_runtime,
+            account_runtime=self.account_runtime,
+            config_runtime=self.config_runtime,
+            remote_runtime=self.remote_runtime,
+            plan_runtime=self.plan_runtime,
+            task_runtime=self.task_runtime,
+        )
 
     def _apply_plugin_before_prompt_hooks(self, prompt: str) -> str:
         if self.plugin_runtime is None:

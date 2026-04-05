@@ -12,6 +12,8 @@ from .task import PortingTask, VALID_TASK_STATUSES
 
 
 DEFAULT_TASK_RUNTIME_PATH = Path('.port_sessions') / 'task_runtime.json'
+ACTIONABLE_TASK_STATUSES = ('pending', 'in_progress')
+TERMINAL_TASK_STATUSES = ('completed', 'cancelled')
 
 
 @dataclass(frozen=True)
@@ -57,15 +59,37 @@ class TaskRuntime:
         self,
         *,
         status: str | None = None,
+        owner: str | None = None,
+        actionable_only: bool = False,
         limit: int | None = None,
     ) -> tuple[PortingTask, ...]:
         tasks = self.tasks
         if status:
             normalized = _normalize_status(status)
             tasks = tuple(task for task in tasks if task.status == normalized)
+        if owner:
+            tasks = tuple(task for task in tasks if task.owner == owner)
+        if actionable_only:
+            actionable_ids = {task.task_id for task in self.next_tasks(limit=None)}
+            tasks = tuple(task for task in tasks if task.task_id in actionable_ids)
+        tasks = tuple(_sort_tasks(tasks))
         if limit is not None and limit >= 0:
             tasks = tasks[:limit]
         return tasks
+
+    def next_tasks(self, *, limit: int | None = 10) -> tuple[PortingTask, ...]:
+        tasks_by_id = {task.task_id: task for task in self.tasks}
+        actionable: list[PortingTask] = []
+        for task in self.tasks:
+            if task.status not in ACTIONABLE_TASK_STATUSES:
+                continue
+            unresolved = _unresolved_dependencies(task, tasks_by_id)
+            if task.status == 'in_progress' or not unresolved:
+                actionable.append(task)
+        actionable = list(_sort_tasks(actionable))
+        if limit is not None and limit >= 0:
+            actionable = actionable[:limit]
+        return tuple(actionable)
 
     def get_task(self, task_id: str) -> PortingTask | None:
         for task in self.tasks:
@@ -78,9 +102,14 @@ class TaskRuntime:
         *,
         title: str,
         description: str | None = None,
-        status: str = 'todo',
+        status: str = 'pending',
         priority: str | None = None,
         task_id: str | None = None,
+        active_form: str | None = None,
+        owner: str | None = None,
+        blocks: tuple[str, ...] | list[str] = (),
+        blocked_by: tuple[str, ...] | list[str] = (),
+        metadata: dict[str, Any] | None = None,
     ) -> TaskMutation:
         task = PortingTask(
             task_id=task_id or f'task_{uuid4().hex[:10]}',
@@ -88,6 +117,15 @@ class TaskRuntime:
             description=description.strip() if isinstance(description, str) and description.strip() else None,
             status=_normalize_status(status),
             priority=priority.strip() if isinstance(priority, str) and priority.strip() else None,
+            active_form=(
+                active_form.strip()
+                if isinstance(active_form, str) and active_form.strip()
+                else None
+            ),
+            owner=owner.strip() if isinstance(owner, str) and owner.strip() else None,
+            blocks=_normalize_id_list(blocks),
+            blocked_by=_normalize_id_list(blocked_by),
+            metadata=dict(metadata or {}),
         )
         return self._persist((*self.tasks, task), task=task)
 
@@ -99,10 +137,19 @@ class TaskRuntime:
         description: str | None = None,
         status: str | None = None,
         priority: str | None = None,
+        active_form: str | None = None,
+        owner: str | None = None,
+        blocks: tuple[str, ...] | list[str] | None = None,
+        blocked_by: tuple[str, ...] | list[str] | None = None,
+        metadata: dict[str, Any] | None = None,
+        merge_metadata: bool = False,
     ) -> TaskMutation:
         existing = self.get_task(task_id)
         if existing is None:
             raise KeyError(task_id)
+        updated_metadata = dict(existing.metadata)
+        if metadata is not None:
+            updated_metadata = {**updated_metadata, **metadata} if merge_metadata else dict(metadata)
         updated = replace(
             existing,
             title=title.strip() if isinstance(title, str) and title.strip() else existing.title,
@@ -119,10 +166,132 @@ class TaskRuntime:
                 else None if priority == ''
                 else existing.priority
             ),
+            active_form=(
+                active_form.strip()
+                if isinstance(active_form, str) and active_form.strip()
+                else None if active_form == ''
+                else existing.active_form
+            ),
+            owner=(
+                owner.strip()
+                if isinstance(owner, str) and owner.strip()
+                else None if owner == ''
+                else existing.owner
+            ),
+            blocks=(
+                _normalize_id_list(blocks)
+                if blocks is not None
+                else existing.blocks
+            ),
+            blocked_by=(
+                _normalize_id_list(blocked_by)
+                if blocked_by is not None
+                else existing.blocked_by
+            ),
+            metadata=updated_metadata,
             updated_at=datetime.now(timezone.utc).isoformat(),
         )
         tasks = tuple(updated if task.task_id == task_id else task for task in self.tasks)
         return self._persist(tasks, task=updated)
+
+    def start_task(
+        self,
+        task_id: str,
+        *,
+        owner: str | None = None,
+        active_form: str | None = None,
+    ) -> TaskMutation:
+        existing = self.get_task(task_id)
+        if existing is None:
+            raise KeyError(task_id)
+        unresolved = _unresolved_dependencies(existing, {task.task_id: task for task in self.tasks})
+        metadata = dict(existing.metadata)
+        if unresolved:
+            metadata['blocked_reason'] = f'waiting_on:{",".join(unresolved)}'
+            return self.update_task(
+                task_id,
+                status='blocked',
+                owner=owner if owner is not None else existing.owner,
+                active_form=active_form if active_form is not None else existing.active_form,
+                metadata=metadata,
+            )
+        if 'blocked_reason' in metadata:
+            metadata.pop('blocked_reason')
+        return self.update_task(
+            task_id,
+            status='in_progress',
+            owner=owner if owner is not None else existing.owner,
+            active_form=active_form if active_form is not None else existing.active_form,
+            metadata=metadata,
+        )
+
+    def complete_task(self, task_id: str) -> TaskMutation:
+        mutation = self.update_task(task_id, status='completed')
+        completed_ids = {task.task_id for task in self.tasks if task.status in TERMINAL_TASK_STATUSES}
+        updated_tasks: list[PortingTask] = []
+        changed = False
+        for task in self.tasks:
+            if task.status != 'blocked':
+                updated_tasks.append(task)
+                continue
+            unresolved = tuple(
+                dependency
+                for dependency in task.blocked_by
+                if dependency not in completed_ids
+            )
+            if unresolved:
+                updated_tasks.append(task)
+                continue
+            metadata = dict(task.metadata)
+            metadata.pop('blocked_reason', None)
+            updated_tasks.append(
+                replace(
+                    task,
+                    status='pending',
+                    metadata=metadata,
+                    updated_at=datetime.now(timezone.utc).isoformat(),
+                )
+            )
+            changed = True
+        if changed:
+            return self._persist(tuple(updated_tasks), task=self.get_task(task_id))
+        return mutation
+
+    def block_task(
+        self,
+        task_id: str,
+        *,
+        blocked_by: tuple[str, ...] | list[str] | None = None,
+        reason: str | None = None,
+    ) -> TaskMutation:
+        existing = self.get_task(task_id)
+        if existing is None:
+            raise KeyError(task_id)
+        merged_blocked_by = tuple(existing.blocked_by)
+        if blocked_by is not None:
+            merged_blocked_by = _merge_ids(existing.blocked_by, _normalize_id_list(blocked_by))
+        metadata = dict(existing.metadata)
+        if isinstance(reason, str) and reason.strip():
+            metadata['blocked_reason'] = reason.strip()
+        return self.update_task(
+            task_id,
+            status='blocked',
+            blocked_by=merged_blocked_by,
+            metadata=metadata,
+        )
+
+    def cancel_task(self, task_id: str, *, reason: str | None = None) -> TaskMutation:
+        existing = self.get_task(task_id)
+        if existing is None:
+            raise KeyError(task_id)
+        metadata = dict(existing.metadata)
+        if isinstance(reason, str) and reason.strip():
+            metadata['cancel_reason'] = reason.strip()
+        return self.update_task(
+            task_id,
+            status='cancelled',
+            metadata=metadata,
+        )
 
     def replace_tasks(self, items: list[dict[str, Any]]) -> TaskMutation:
         tasks: list[PortingTask] = []
@@ -157,6 +326,25 @@ class TaskRuntime:
                         and item.get('priority').strip()
                         else None
                     ),
+                    active_form=(
+                        item.get('active_form').strip()
+                        if isinstance(item.get('active_form'), str)
+                        and item.get('active_form').strip()
+                        else None
+                    ),
+                    owner=(
+                        item.get('owner').strip()
+                        if isinstance(item.get('owner'), str)
+                        and item.get('owner').strip()
+                        else None
+                    ),
+                    blocks=_normalize_id_list(item.get('blocks', [])),
+                    blocked_by=_normalize_id_list(item.get('blocked_by', [])),
+                    metadata=(
+                        dict(item.get('metadata'))
+                        if isinstance(item.get('metadata'), dict)
+                        else {}
+                    ),
                     created_at=(
                         str(item.get('created_at'))
                         if isinstance(item.get('created_at'), str)
@@ -181,26 +369,55 @@ class TaskRuntime:
                 '- Status counts: '
                 + ', '.join(f'{name}={count}' for name, count in sorted(counts.items()))
             )
+        actionable = self.next_tasks(limit=None)
+        if actionable:
+            lines.append(f'- Actionable tasks: {len(actionable)}')
+        blocked = [task for task in self.tasks if task.status == 'blocked']
+        if blocked:
+            lines.append(f'- Blocked tasks: {len(blocked)}')
         if self.tasks:
-            preview = ', '.join(task.title for task in self.tasks[:4])
+            preview = ', '.join(task.title for task in _sort_tasks(self.tasks)[:4])
             if len(self.tasks) > 4:
                 preview += f', ... (+{len(self.tasks) - 4} more)'
             lines.append(f'- Task preview: {preview}')
         return '\n'.join(lines)
 
-    def render_tasks(self, *, status: str | None = None, limit: int = 50) -> str:
-        tasks = self.list_tasks(status=status, limit=limit)
+    def render_tasks(
+        self,
+        *,
+        status: str | None = None,
+        owner: str | None = None,
+        actionable_only: bool = False,
+        limit: int = 50,
+    ) -> str:
+        tasks = self.list_tasks(
+            status=status,
+            owner=owner,
+            actionable_only=actionable_only,
+            limit=limit,
+        )
         if not tasks:
             return '# Tasks\n\nNo tasks are currently stored.'
         lines = ['# Tasks', '']
+        if actionable_only:
+            lines.append('Showing actionable tasks only.')
+            lines.append('')
         for task in tasks:
             details = [task.task_id, f'status={task.status}']
             if task.priority:
                 details.append(f'priority={task.priority}')
+            if task.owner:
+                details.append(f'owner={task.owner}')
             details.append(f'title={task.title}')
             lines.append('- ' + '; '.join(details))
             if task.description:
                 lines.append(f'  description: {task.description}')
+            if task.active_form:
+                lines.append(f'  active_form: {task.active_form}')
+            if task.blocked_by:
+                lines.append(f"  blocked_by: {', '.join(task.blocked_by)}")
+            if task.blocks:
+                lines.append(f"  blocks: {', '.join(task.blocks)}")
         return '\n'.join(lines)
 
     def render_task(self, task_id: str) -> str:
@@ -216,9 +433,38 @@ class TaskRuntime:
         ]
         if task.priority:
             lines.append(f'- Priority: {task.priority}')
+        if task.owner:
+            lines.append(f'- Owner: {task.owner}')
+        if task.active_form:
+            lines.append(f'- Active Form: {task.active_form}')
         if task.description:
             lines.append(f'- Description: {task.description}')
+        if task.blocked_by:
+            lines.append(f"- Blocked By: {', '.join(task.blocked_by)}")
+        if task.blocks:
+            lines.append(f"- Blocks: {', '.join(task.blocks)}")
+        if task.metadata:
+            lines.append('- Metadata:')
+            for key, value in sorted(task.metadata.items()):
+                lines.append(f'  - {key}={value}')
         lines.append(f'- Updated: {task.updated_at}')
+        return '\n'.join(lines)
+
+    def render_next_tasks(self, *, limit: int = 10) -> str:
+        tasks = self.next_tasks(limit=limit)
+        if not tasks:
+            return '# Next Tasks\n\nNo actionable tasks are currently available.'
+        lines = ['# Next Tasks', '']
+        for task in tasks:
+            details = [task.task_id, f'status={task.status}', f'title={task.title}']
+            if task.owner:
+                details.append(f'owner={task.owner}')
+            lines.append('- ' + '; '.join(details))
+            unresolved = _unresolved_dependencies(task, {item.task_id: item for item in self.tasks})
+            if unresolved:
+                lines.append(f"  unresolved_dependencies: {', '.join(unresolved)}")
+            if task.active_form:
+                lines.append(f'  active_form: {task.active_form}')
         return '\n'.join(lines)
 
     def _persist(
@@ -227,11 +473,12 @@ class TaskRuntime:
         *,
         task: PortingTask | None,
     ) -> TaskMutation:
-        before_text = self._serialize_payload(self.tasks)
+        before_tasks = self.tasks
+        before_text = self._serialize_payload(before_tasks)
         before_preview = _snapshot_text(before_text)
         before_sha256 = (
             hashlib.sha256(before_text.encode('utf-8')).hexdigest()
-            if self.storage_path.exists() or self.tasks
+            if self.storage_path.exists() or before_tasks
             else None
         )
         payload_text = self._serialize_payload(tasks)
@@ -246,7 +493,7 @@ class TaskRuntime:
             after_sha256=after_sha256,
             before_preview=before_preview if before_text.strip() else None,
             after_preview=_snapshot_text(payload_text),
-            before_count=len(json.loads(before_text).get('tasks', [])) if before_text.strip() else 0,
+            before_count=len(before_tasks),
             after_count=len(tasks),
         )
 
@@ -268,11 +515,81 @@ def _normalize_status(value: Any) -> str:
     if isinstance(value, str):
         lowered = value.strip().lower().replace('-', '_').replace(' ', '_')
         aliases = {
-            'complete': 'done',
-            'completed': 'done',
-            'open': 'todo',
+            'complete': 'completed',
+            'done': 'completed',
+            'todo': 'pending',
+            'open': 'pending',
         }
         lowered = aliases.get(lowered, lowered)
         if lowered in VALID_TASK_STATUSES:
             return lowered
-    return 'todo'
+    return 'pending'
+
+
+def _normalize_id_list(value: Any) -> tuple[str, ...]:
+    if value is None:
+        return ()
+    if isinstance(value, tuple):
+        items = list(value)
+    elif isinstance(value, list):
+        items = value
+    else:
+        return ()
+    normalized: list[str] = []
+    seen: set[str] = set()
+    for item in items:
+        if not isinstance(item, str):
+            continue
+        text = item.strip()
+        if not text or text in seen:
+            continue
+        normalized.append(text)
+        seen.add(text)
+    return tuple(normalized)
+
+
+def _merge_ids(existing: tuple[str, ...], additions: tuple[str, ...]) -> tuple[str, ...]:
+    merged = list(existing)
+    seen = set(existing)
+    for item in additions:
+        if item in seen:
+            continue
+        merged.append(item)
+        seen.add(item)
+    return tuple(merged)
+
+
+def _unresolved_dependencies(
+    task: PortingTask,
+    tasks_by_id: dict[str, PortingTask],
+) -> tuple[str, ...]:
+    unresolved: list[str] = []
+    for dependency_id in task.blocked_by:
+        dependency = tasks_by_id.get(dependency_id)
+        if dependency is None:
+            unresolved.append(dependency_id)
+            continue
+        if dependency.status not in TERMINAL_TASK_STATUSES:
+            unresolved.append(dependency_id)
+    return tuple(unresolved)
+
+
+def _task_sort_key(task: PortingTask) -> tuple[int, int, str, str]:
+    status_rank = {
+        'in_progress': 0,
+        'pending': 1,
+        'blocked': 2,
+        'completed': 3,
+        'cancelled': 4,
+    }.get(task.status, 9)
+    priority_rank = {
+        'critical': 0,
+        'high': 1,
+        'medium': 2,
+        'low': 3,
+    }.get((task.priority or '').lower(), 9)
+    return (status_rank, priority_rank, task.title.lower(), task.task_id)
+
+
+def _sort_tasks(tasks: tuple[PortingTask, ...] | list[PortingTask]) -> tuple[PortingTask, ...]:
+    return tuple(sorted(tasks, key=_task_sort_key))

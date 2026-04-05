@@ -1,0 +1,67 @@
+from __future__ import annotations
+
+import tempfile
+import unittest
+from pathlib import Path
+
+from src.agent_tools import build_tool_context, default_tool_registry, execute_tool
+from src.agent_types import AgentRuntimeConfig
+
+
+class ExtendedToolTests(unittest.TestCase):
+    def test_web_fetch_reads_text_from_file_url(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            workspace = Path(tmp_dir)
+            target = workspace / 'page.txt'
+            target.write_text('hello from web fetch\n', encoding='utf-8')
+            context = build_tool_context(
+                AgentRuntimeConfig(cwd=workspace),
+                tool_registry=default_tool_registry(),
+            )
+            result = execute_tool(
+                default_tool_registry(),
+                'web_fetch',
+                {'url': target.resolve().as_uri()},
+                context,
+            )
+
+        self.assertTrue(result.ok)
+        self.assertIn('hello from web fetch', result.content)
+        self.assertEqual(result.metadata.get('action'), 'web_fetch')
+
+    def test_tool_search_lists_matching_tools(self) -> None:
+        registry = default_tool_registry()
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            context = build_tool_context(
+                AgentRuntimeConfig(cwd=Path(tmp_dir)),
+                tool_registry=registry,
+            )
+            result = execute_tool(
+                registry,
+                'tool_search',
+                {'query': 'file'},
+                context,
+            )
+
+        self.assertTrue(result.ok)
+        self.assertIn('# Tool Search', result.content)
+        self.assertIn('read_file', result.content)
+        self.assertIn('write_file', result.content)
+
+    def test_sleep_tool_waits_briefly_and_returns_metadata(self) -> None:
+        registry = default_tool_registry()
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            context = build_tool_context(
+                AgentRuntimeConfig(cwd=Path(tmp_dir)),
+                tool_registry=registry,
+            )
+            result = execute_tool(
+                registry,
+                'sleep',
+                {'seconds': 0.01},
+                context,
+            )
+
+        self.assertTrue(result.ok)
+        self.assertIn('slept for', result.content)
+        self.assertEqual(result.metadata.get('action'), 'sleep')

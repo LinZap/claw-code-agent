@@ -92,6 +92,10 @@ def build_system_prompt_parts(
         get_using_your_tools_section(enabled_tool_names),
         get_plugin_guidance_section(prompt_context),
         get_mcp_guidance_section(prompt_context),
+        get_remote_guidance_section(prompt_context),
+        get_search_guidance_section(prompt_context),
+        get_account_guidance_section(prompt_context),
+        get_config_guidance_section(prompt_context),
         get_plan_guidance_section(prompt_context),
         get_task_guidance_section(prompt_context),
         get_hook_policy_guidance_section(prompt_context),
@@ -229,11 +233,60 @@ def get_mcp_guidance_section(prompt_context: PromptContext) -> str:
     if not mcp_runtime:
         return ''
     items = [
-        'Local MCP manifests may expose additional resources through the runtime.',
+        'Local MCP manifests may expose additional resources and transport-backed tools through the runtime.',
         'Use MCP resource tools when the task depends on manifest-backed external context or curated workspace resources.',
-        'Treat MCP resource summaries as discoverability hints and prefer reading the specific resource URI before relying on its contents.',
+        'Use MCP transport tools when a configured MCP server exposes real callable tools that should stay outside the local Python tool registry.',
+        'Treat MCP resource and tool summaries as discoverability hints and prefer reading a specific resource URI or calling a specific MCP tool before relying on its contents.',
     ]
     return '\n'.join(['# MCP', *prepend_bullets(items)])
+
+
+def get_remote_guidance_section(prompt_context: PromptContext) -> str:
+    remote_runtime = prompt_context.user_context.get('remoteRuntime')
+    if not remote_runtime:
+        return ''
+    items = [
+        'Local remote manifests or an active remote connection may be available in the workspace context.',
+        'Use remote status or remote-connect flows before assuming a specific remote target is active.',
+        'Treat remote summaries as runtime state for the current workspace, including active target, session URL, and remote workspace path when present.',
+    ]
+    return '\n'.join(['# Remote', *prepend_bullets(items)])
+
+
+def get_search_guidance_section(prompt_context: PromptContext) -> str:
+    search_runtime = prompt_context.user_context.get('searchRuntime')
+    if not search_runtime:
+        return ''
+    items = [
+        'Local workspace web-search providers may be available through the runtime.',
+        'Use the web_search tool when the task requires discovering external pages rather than fetching a known URL directly.',
+        'Use web_fetch after web_search when you need to inspect the contents of a selected result page.',
+    ]
+    return '\n'.join(['# Search', *prepend_bullets(items)])
+
+
+def get_account_guidance_section(prompt_context: PromptContext) -> str:
+    account_runtime = prompt_context.user_context.get('accountRuntime')
+    if not account_runtime:
+        return ''
+    items = [
+        'Local workspace account or auth state may be available through the runtime.',
+        'Use account tools and account slash commands when the task depends on local login state, configured profiles, or auth metadata.',
+        'Treat local account summaries as workspace runtime state, including active identity, configured profiles, and visible credential env vars.',
+    ]
+    return '\n'.join(['# Account', *prepend_bullets(items)])
+
+
+def get_config_guidance_section(prompt_context: PromptContext) -> str:
+    config_runtime = prompt_context.user_context.get('configRuntime')
+    if not config_runtime:
+        return ''
+    items = [
+        'Local workspace config and settings files may be available through the runtime.',
+        'Use config tools instead of ad-hoc file edits when the task is specifically about settings or config state.',
+        'Treat the effective config as merged workspace state, and inspect the specific source when override order matters.',
+    ]
+    return '\n'.join(['# Config', *prepend_bullets(items)])
 
 
 def get_task_guidance_section(prompt_context: PromptContext) -> str:
@@ -244,6 +297,7 @@ def get_task_guidance_section(prompt_context: PromptContext) -> str:
         'A local runtime task list may be available to track ongoing work.',
         'Use task and todo tools to keep the plan state current when the task spans multiple steps or files.',
         'Prefer updating the stored task list instead of repeating the same progress summary in free-form text.',
+        'Use task_next and the richer task state tools when dependencies or blocked work matter.',
     ]
     return '\n'.join(['# Tasks', *prepend_bullets(items)])
 

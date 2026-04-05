@@ -72,12 +72,22 @@ Done:
 - [x] Local manifest-backed MCP resource discovery
 - [x] Local MCP resource listing and reading
 - [x] MCP-backed runtime tools for local resource access
+- [x] Real stdio MCP client transport for `initialize`, `resources/list`, `resources/read`, `tools/list`, and `tools/call`
+- [x] Transport-backed MCP tool listing and execution
+- [x] Local manifest-backed remote runtime discovery
+- [x] Local remote profile listing and summary reporting
+- [x] Local remote connect/disconnect state persistence
+- [x] Local manifest/env-backed search runtime discovery
+- [x] Local search-provider activation persistence
+- [x] Provider-backed web search execution against configured search backends
 - [x] Local persistent task runtime discovery
 - [x] Local task create/get/list/update runtime flows
 - [x] Local todo-list replacement runtime flow
 - [x] Local persistent plan runtime discovery
 - [x] Local plan get/update/clear runtime flows
 - [x] Local plan-to-task sync flow
+- [x] Dependency-aware local task state with blocking and actionable-task selection
+- [x] Local task start/complete/block/cancel execution flows
 - [x] Compaction metadata with compacted message ids
 - [x] Compaction metadata with preserved-tail ids and compaction depth
 - [x] Compaction metadata with compacted/preserved lineage ids and revision summaries
@@ -125,11 +135,18 @@ Done:
 - [x] Local background session logs (`agent-logs`)
 - [x] Local background attach snapshot (`agent-attach`)
 - [x] Local background kill flow (`agent-kill`)
+- [x] Local daemon-style background command family (`daemon start/ps/logs/attach/kill`)
+- [x] Local daemon worker command path (`daemon worker`)
+- [x] Local remote runtime CLI modes (`remote-mode`, `ssh-mode`, `teleport-mode`, `direct-connect-mode`, `deep-link-mode`)
+- [x] Local remote runtime inspection commands (`remote-status`, `remote-profiles`, `remote-disconnect`)
+- [x] Local account runtime inspection commands (`account-status`, `account-profiles`, `account-login`, `account-logout`)
+- [x] Local search runtime inspection commands (`search-status`, `search-providers`, `search-activate`, `search`)
+- [x] Local MCP runtime inspection commands (`mcp-status`, `mcp-resources`, `mcp-resource`, `mcp-tools`, `mcp-call-tool`)
 - [x] Inventory/helper commands such as `summary`, `manifest`, `commands`, and `tools`
 
 Missing:
 
-- [ ] Daemon worker mode
+- [ ] Full daemon supervisor parity beyond the current local daemon wrapper and worker flow
 - [ ] Remote-control / bridge runtime mode
 - [ ] Browser/native-host runtime mode
 - [ ] Computer-use MCP mode
@@ -152,6 +169,10 @@ Done:
 - [x] Custom system prompt override and append support
 - [x] Local hook/policy guidance section in the Python system prompt
 - [x] Local MCP guidance section in the Python system prompt
+- [x] MCP transport/tool guidance section in the Python system prompt
+- [x] Local remote-runtime guidance section in the Python system prompt
+- [x] Local search-runtime guidance section in the Python system prompt
+- [x] Local account-runtime guidance section in the Python system prompt
 - [x] Local planning guidance section in the Python system prompt
 - [x] Local task guidance section in the Python system prompt
 
@@ -178,18 +199,23 @@ Done:
 - [x] `CLAUDE.md` discovery
 - [x] Extra directory injection through `--add-dir`
 - [x] Session context usage report
+- [x] Tokenizer-aware context accounting with cached model-specific backends and heuristic fallback
 - [x] Raw context inspection command
 - [x] Plugin cache snapshot injection
 - [x] Manifest-based plugin runtime summary injection
 - [x] Manifest-based hook/policy summary injection
 - [x] Trust-mode, managed-settings, and safe-env context injection
 - [x] Manifest-based MCP runtime summary injection
+- [x] Manifest-based MCP transport server summary injection
+- [x] Manifest-based remote runtime summary injection
+- [x] Manifest/env-based search runtime summary injection
+- [x] Manifest-based account runtime summary injection
 - [x] Manifest-based plan runtime summary injection
 - [x] Manifest-based task runtime summary injection
 
 Missing:
 
-- [ ] Tokenizer-accurate context accounting
+- [ ] Full tokenizer/chat-message framing parity beyond the current model-aware text token counters
 - [ ] Full parity with `utils/queryContext.ts`
 - [ ] Rich memory prompt loading
 - [ ] Internal permission-aware memory handling
@@ -209,6 +235,19 @@ Done:
 - [x] `/context-raw`
 - [x] `/env`
 - [x] `/mcp`
+- [x] `/mcp tools`
+- [x] `/mcp tool <name>`
+- [x] `/search`
+- [x] `/remote`
+- [x] `/remotes`
+- [x] `/ssh`
+- [x] `/teleport`
+- [x] `/direct-connect`
+- [x] `/deep-link`
+- [x] `/disconnect`
+- [x] `/account`
+- [x] `/login`
+- [x] `/logout`
 - [x] `/resources`
 - [x] `/resource`
 - [x] `/plan`
@@ -216,6 +255,7 @@ Done:
 - [x] `/tasks`
 - [x] `/todo`
 - [x] `/task`
+- [x] `/task-next`
 - [x] `/prompt`
 - [x] `/system-prompt`
 - [x] `/permissions`
@@ -228,16 +268,18 @@ Done:
 - [x] `/status`
 - [x] `/session`
 - [x] `/clear`
+- [x] `/config`
+- [x] `/settings`
 
 Missing:
 
 - [ ] Full npm slash-command surface
-- [ ] Slash commands backed by MCP integration
+- [x] Slash commands backed by MCP integration
 - [ ] Slash commands tied to task/plan systems beyond the current local `/plan`, `/tasks`, and `/task` flows
-- [ ] Slash commands tied to remote/background sessions
+- [ ] Slash commands tied to remote/background sessions beyond the current local remote connect/disconnect and background inspection flows
 - [ ] Slash commands with richer interactive behavior
 - [ ] Slash commands tied to plugins and bundled skills
-- [ ] Slash commands tied to settings, config, and account state
+- [ ] Slash commands tied to account, settings, and auth flows beyond the current local `/account`, `/login`, `/logout`, `/config`, and `/settings` flows
 
 ## 6. Built-in Tools
 
@@ -250,16 +292,41 @@ Done:
 - [x] `glob_search`
 - [x] `grep_search`
 - [x] `bash`
+- [x] `web_fetch`
+- [x] `search_status`
+- [x] `search_list_providers`
+- [x] `search_activate_provider`
+- [x] `web_search`
+- [x] `tool_search`
+- [x] `sleep`
+- [x] `account_status`
+- [x] `account_list_profiles`
+- [x] `account_login`
+- [x] `account_logout`
 - [x] `mcp_list_resources`
 - [x] `mcp_read_resource`
+- [x] `mcp_list_tools`
+- [x] `mcp_call_tool`
+- [x] `remote_status`
+- [x] `remote_list_profiles`
+- [x] `remote_connect`
+- [x] `remote_disconnect`
+- [x] `config_list`
+- [x] `config_get`
+- [x] `config_set`
 - [x] `plan_get`
 - [x] `update_plan`
 - [x] `plan_clear`
 - [x] `delegate_agent`
+- [x] `task_next`
 - [x] `task_list`
 - [x] `task_get`
 - [x] `task_create`
 - [x] `task_update`
+- [x] `task_start`
+- [x] `task_complete`
+- [x] `task_block`
+- [x] `task_cancel`
 - [x] `todo_write`
 
 Missing:
@@ -267,11 +334,11 @@ Missing:
 - [ ] Agent spawning tool parity beyond the current `delegate_agent` runtime tool
 - [ ] Skill tool
 - [ ] Notebook edit tool
-- [ ] Web fetch tool
-- [ ] Web search tool
+- [ ] Web fetch parity beyond the current local text-fetch implementation
+- [ ] Web search parity beyond the current provider-backed implementation
 - [ ] Ask-user-question tool
 - [ ] LSP tool
-- [ ] Tool search tool
+- [ ] Tool search parity beyond the current local registry search
 - [ ] Config tool
 - [ ] Team create/delete tools
 - [ ] Send-message tool
@@ -279,7 +346,7 @@ Missing:
 - [ ] Browser tool
 - [ ] Workflow tool
 - [ ] Remote trigger tool
-- [ ] Sleep / cron tools
+- [ ] Sleep / cron tools beyond the current local `sleep` tool
 - [ ] PowerShell tool parity
 - [ ] Worktree enter/exit tools
 - [ ] Full `tools.ts` parity
@@ -294,13 +361,15 @@ Done:
 - [x] Local todo-list replacement flow
 - [x] Local persistent plan runtime with get/update/clear flows
 - [x] Local plan-to-task sync flow
+- [x] Local dependency-aware task execution flow with next-task selection and blocked/unblocked state
+- [x] Local remote profile/runtime flow with persisted connect/disconnect state
 - [x] Local background task management for agent worker sessions
 
 Missing:
 
 - [ ] Real implementation of the larger upstream command tree
-- [ ] Task orchestration system beyond the current local plan/task sync runtime
-- [ ] Planner / task execution parity beyond the current local plan persistence and sync flow
+- [ ] Task orchestration system beyond the current local dependency-aware task runtime
+- [ ] Planner / task execution parity beyond the current local plan persistence, sync, and next-task flow
 - [ ] Team / collaboration command flows
 - [ ] Command-specific session behaviors
 - [ ] Full `src/commands/*` parity
@@ -338,12 +407,13 @@ Done:
 - [x] Local manifest-backed MCP discovery
 - [x] Local MCP resource listing and reading
 - [x] MCP-backed runtime tools for local resource access
+- [x] Real MCP client support over local stdio transport
+- [x] MCP server integration for stdio child-process servers
+- [x] MCP-backed tool listing and execution over transport
 
 Missing:
 
-- [ ] Real MCP client support
-- [ ] MCP server integration
-- [ ] Full MCP-backed tool parity beyond the current local resource list/read tools
+- [ ] Full MCP-backed tool parity beyond the current stdio resource/tool list/read/call support
 - [ ] Plugin discovery and loading
 - [ ] Bundled plugin support
 - [ ] Plugin lifecycle management
@@ -376,12 +446,15 @@ Missing:
 Done:
 
 - [x] Session save/resume on local disk
+- [x] Local manifest-backed remote profile/runtime state
+- [x] Local remote connect/disconnect session state
 - [x] Local background agent processes
 - [x] Local background attach/log/kill workflows
+- [x] Local daemon-style wrapper over background agent sessions
 
 Missing:
 
-- [ ] Remote execution modes
+- [ ] Real remote execution modes beyond the current local manifest-backed remote runtime and CLI/profile flows
 - [ ] Team runtime features
 - [ ] Team messaging features
 - [ ] Shared remote state
@@ -410,6 +483,7 @@ Missing:
 Done:
 
 - [x] Minimal internal service layer required by the current Python runtime
+- [x] Local account/auth runtime for manifest-backed profile discovery and persisted login state
 
 Missing:
 
@@ -435,14 +509,19 @@ Working Python runtime today:
 - [x] `src/agent_context_usage.py`
 - [x] `src/agent_session.py`
 - [x] `src/agent_slash_commands.py`
+- [x] `src/account_runtime.py`
+- [x] `src/config_runtime.py`
 - [x] `src/agent_types.py`
 - [x] `src/mcp_runtime.py`
 - [x] `src/plan_runtime.py`
 - [x] `src/plugin_runtime.py`
+- [x] `src/remote_runtime.py`
+- [x] `src/search_runtime.py`
 - [x] `src/hook_policy.py`
 - [x] `src/background_runtime.py`
 - [x] `src/task.py`
 - [x] `src/task_runtime.py`
+- [x] `src/tokenizer_runtime.py`
 - [x] `src/openai_compat.py`
 - [x] `src/session_store.py`
 - [x] `src/permissions.py`
@@ -464,11 +543,11 @@ Mirrored inventory / scaffold areas that still need real implementation work:
 
 - [ ] Expand the real Python tool registry toward upstream `tools.ts`
 - [ ] Replace more snapshot-backed mirrored modules with working runtime code
-- [ ] Implement real MCP support
+- [ ] Expand MCP parity beyond the current stdio resource/tool transport support
 - [ ] Expand hooks and policy parity beyond the current manifest/runtime implementation
 - [ ] Build a real interactive REPL / TUI
 - [ ] Add tokenizer-accurate context accounting
 - [ ] Expand background session parity beyond the current local worker/log/attach model
-- [ ] Add real remote session modes
+- [ ] Add real remote session transport and shared remote state beyond the current local remote-profile runtime
 - [ ] Port more of the command/task system
 - [ ] Close the gap between the mirrored workspace and the working runtime

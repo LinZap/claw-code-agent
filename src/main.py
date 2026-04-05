@@ -9,6 +9,7 @@ import json
 from typing import Callable
 
 from .background_runtime import BackgroundSessionRuntime, build_background_worker_command
+from .account_runtime import AccountRuntime
 from .agent_runtime import LocalCodingAgent
 from .agent_types import (
     AgentPermissions,
@@ -21,12 +22,21 @@ from .agent_types import (
 from .bootstrap_graph import build_bootstrap_graph
 from .command_graph import build_command_graph
 from .commands import execute_command, get_command, get_commands, render_command_index
-from .direct_modes import run_deep_link, run_direct_connect
+from .config_runtime import ConfigRuntime
+from .mcp_runtime import MCPRuntime
 from .parity_audit import run_parity_audit
 from .permissions import ToolPermissionContext
 from .port_manifest import build_port_manifest
 from .query_engine import QueryEnginePort
-from .remote_runtime import run_remote_mode, run_ssh_mode, run_teleport_mode
+from .remote_runtime import (
+    RemoteRuntime,
+    run_deep_link_mode,
+    run_direct_connect_mode,
+    run_remote_mode,
+    run_ssh_mode,
+    run_teleport_mode,
+)
+from .search_runtime import SearchRuntime
 from .runtime import PortRuntime
 from .session_store import (
     StoredAgentSession,
@@ -246,6 +256,58 @@ def _add_agent_resume_args(parser: argparse.ArgumentParser) -> None:
     parser.add_argument('--response-schema-name')
     parser.add_argument('--response-schema-strict', action='store_true')
     parser.add_argument('--scratchpad-root')
+
+
+def _launch_background_agent(args: argparse.Namespace) -> int:
+    background_runtime = BackgroundSessionRuntime()
+    background_id = background_runtime.create_id()
+    forwarded_args: list[str] = []
+    _append_agent_forwarded_args(forwarded_args, args, include_backend=True)
+    forwarded_args.extend(['--background-root', str(background_runtime.root)])
+    command = build_background_worker_command(
+        background_id=background_id,
+        prompt=args.prompt,
+        forwarded_args=forwarded_args,
+    )
+    record = background_runtime.launch(
+        command,
+        prompt=args.prompt,
+        workspace_cwd=Path(args.cwd).resolve(),
+        model=args.model,
+        background_id=background_id,
+        process_cwd=Path(__file__).resolve().parent.parent,
+    )
+    print('# Background Session')
+    print(f'background_id={record.background_id}')
+    print(f'pid={record.pid}')
+    print(f'log_path={record.log_path}')
+    print(f'record_path={record.record_path}')
+    return 0
+
+
+def _run_background_worker(args: argparse.Namespace) -> int:
+    background_runtime = BackgroundSessionRuntime(Path(args.background_root))
+    exit_code = 1
+    stop_reason = 'worker_failed'
+    session_id = None
+    session_path = None
+    try:
+        agent = _build_agent(args)
+        result = agent.run(args.prompt)
+        _print_agent_result(result, show_transcript=args.show_transcript)
+        exit_code = 0
+        stop_reason = result.stop_reason or 'completed'
+        session_id = result.session_id
+        session_path = result.session_path
+        return 0
+    finally:
+        background_runtime.mark_finished(
+            args.background_id,
+            exit_code=exit_code,
+            stop_reason=stop_reason,
+            session_id=session_id,
+            session_path=session_path,
+        )
 
 
 def _build_resumed_agent(args: argparse.Namespace) -> tuple[LocalCodingAgent, StoredAgentSession]:
@@ -519,14 +581,86 @@ def build_parser() -> argparse.ArgumentParser:
 
     remote_parser = subparsers.add_parser('remote-mode', help='simulate remote-control runtime branching')
     remote_parser.add_argument('target')
+    remote_parser.add_argument('--cwd', default='.')
     ssh_parser = subparsers.add_parser('ssh-mode', help='simulate SSH runtime branching')
     ssh_parser.add_argument('target')
+    ssh_parser.add_argument('--cwd', default='.')
     teleport_parser = subparsers.add_parser('teleport-mode', help='simulate teleport runtime branching')
     teleport_parser.add_argument('target')
+    teleport_parser.add_argument('--cwd', default='.')
     direct_parser = subparsers.add_parser('direct-connect-mode', help='simulate direct-connect runtime branching')
     direct_parser.add_argument('target')
+    direct_parser.add_argument('--cwd', default='.')
     deep_link_parser = subparsers.add_parser('deep-link-mode', help='simulate deep-link runtime branching')
     deep_link_parser.add_argument('target')
+    deep_link_parser.add_argument('--cwd', default='.')
+    remote_status_parser = subparsers.add_parser('remote-status', help='show local remote runtime status')
+    remote_status_parser.add_argument('--cwd', default='.')
+    remote_profiles_parser = subparsers.add_parser('remote-profiles', help='list configured local remote profiles')
+    remote_profiles_parser.add_argument('--cwd', default='.')
+    remote_profiles_parser.add_argument('--query')
+    remote_disconnect_parser = subparsers.add_parser('remote-disconnect', help='disconnect the active local remote target')
+    remote_disconnect_parser.add_argument('--cwd', default='.')
+    account_status_parser = subparsers.add_parser('account-status', help='show local account runtime status')
+    account_status_parser.add_argument('--cwd', default='.')
+    account_profiles_parser = subparsers.add_parser('account-profiles', help='list configured local account profiles')
+    account_profiles_parser.add_argument('--cwd', default='.')
+    account_profiles_parser.add_argument('--query')
+    account_login_parser = subparsers.add_parser('account-login', help='activate a local account profile or ephemeral identity')
+    account_login_parser.add_argument('target')
+    account_login_parser.add_argument('--provider')
+    account_login_parser.add_argument('--auth-mode')
+    account_login_parser.add_argument('--cwd', default='.')
+    account_logout_parser = subparsers.add_parser('account-logout', help='clear the active local account session')
+    account_logout_parser.add_argument('--cwd', default='.')
+    search_status_parser = subparsers.add_parser('search-status', help='show local search runtime status')
+    search_status_parser.add_argument('--cwd', default='.')
+    search_status_parser.add_argument('--provider')
+    search_providers_parser = subparsers.add_parser('search-providers', help='list configured local search providers')
+    search_providers_parser.add_argument('--cwd', default='.')
+    search_providers_parser.add_argument('--query')
+    search_activate_parser = subparsers.add_parser('search-activate', help='set the active local search provider')
+    search_activate_parser.add_argument('provider')
+    search_activate_parser.add_argument('--cwd', default='.')
+    search_parser = subparsers.add_parser('search', help='run a real web search against the configured local search runtime')
+    search_parser.add_argument('query')
+    search_parser.add_argument('--cwd', default='.')
+    search_parser.add_argument('--provider')
+    search_parser.add_argument('--max-results', type=int, default=5)
+    search_parser.add_argument('--domain', action='append', default=[])
+    mcp_status_parser = subparsers.add_parser('mcp-status', help='show local MCP runtime status')
+    mcp_status_parser.add_argument('--cwd', default='.')
+    mcp_resources_parser = subparsers.add_parser('mcp-resources', help='list MCP resources discovered through local manifests and transport-backed servers')
+    mcp_resources_parser.add_argument('--cwd', default='.')
+    mcp_resources_parser.add_argument('--query')
+    mcp_resource_parser = subparsers.add_parser('mcp-resource', help='read an MCP resource by URI')
+    mcp_resource_parser.add_argument('uri')
+    mcp_resource_parser.add_argument('--cwd', default='.')
+    mcp_tools_parser = subparsers.add_parser('mcp-tools', help='list MCP tools exposed by configured MCP servers')
+    mcp_tools_parser.add_argument('--cwd', default='.')
+    mcp_tools_parser.add_argument('--query')
+    mcp_tools_parser.add_argument('--server')
+    mcp_call_tool_parser = subparsers.add_parser('mcp-call-tool', help='call an MCP tool exposed by a configured MCP server')
+    mcp_call_tool_parser.add_argument('tool_name')
+    mcp_call_tool_parser.add_argument('--arguments-json', default='{}')
+    mcp_call_tool_parser.add_argument('--server')
+    mcp_call_tool_parser.add_argument('--cwd', default='.')
+    config_status_parser = subparsers.add_parser('config-status', help='show local workspace config runtime summary')
+    config_status_parser.add_argument('--cwd', default='.')
+    config_effective_parser = subparsers.add_parser('config-effective', help='render the merged effective local workspace config')
+    config_effective_parser.add_argument('--cwd', default='.')
+    config_source_parser = subparsers.add_parser('config-source', help='render a specific local config source')
+    config_source_parser.add_argument('source')
+    config_source_parser.add_argument('--cwd', default='.')
+    config_get_parser = subparsers.add_parser('config-get', help='read a local config value by dotted key path')
+    config_get_parser.add_argument('key_path')
+    config_get_parser.add_argument('--source')
+    config_get_parser.add_argument('--cwd', default='.')
+    config_set_parser = subparsers.add_parser('config-set', help='write a local config value by dotted key path')
+    config_set_parser.add_argument('key_path')
+    config_set_parser.add_argument('value_json')
+    config_set_parser.add_argument('--source', default='local')
+    config_set_parser.add_argument('--cwd', default='.')
 
     show_command = subparsers.add_parser('show-command', help='show one mirrored command entry by exact name')
     show_command.add_argument('name')
@@ -574,6 +708,38 @@ def build_parser() -> argparse.ArgumentParser:
 
     kill_parser = subparsers.add_parser('agent-kill', help='stop a local background agent session')
     kill_parser.add_argument('background_id')
+
+    daemon_parser = subparsers.add_parser('daemon', help='manage local daemon-style background agent sessions')
+    daemon_subparsers = daemon_parser.add_subparsers(dest='daemon_command')
+    daemon_subparsers.required = True
+
+    daemon_start_parser = daemon_subparsers.add_parser('start', help='launch a local daemon-style background agent session')
+    daemon_start_parser.add_argument('prompt')
+    daemon_start_parser.add_argument('--max-turns', type=int, default=12)
+    daemon_start_parser.add_argument('--show-transcript', action='store_true')
+    _add_agent_common_args(daemon_start_parser, include_backend=True)
+
+    daemon_worker_parser = daemon_subparsers.add_parser('worker', help=argparse.SUPPRESS)
+    daemon_worker_parser.add_argument('background_id')
+    daemon_worker_parser.add_argument('prompt')
+    daemon_worker_parser.add_argument('--background-root', required=True)
+    daemon_worker_parser.add_argument('--max-turns', type=int, default=12)
+    daemon_worker_parser.add_argument('--show-transcript', action='store_true')
+    _add_agent_common_args(daemon_worker_parser, include_backend=True)
+
+    daemon_ps_parser = daemon_subparsers.add_parser('ps', help='list local daemon-style background sessions')
+    daemon_ps_parser.add_argument('--tail', type=int, default=None)
+
+    daemon_logs_parser = daemon_subparsers.add_parser('logs', help='show logs for a local daemon-style background session')
+    daemon_logs_parser.add_argument('background_id')
+    daemon_logs_parser.add_argument('--tail', type=int, default=None)
+
+    daemon_attach_parser = daemon_subparsers.add_parser('attach', help='show the current output snapshot for a local daemon-style background session')
+    daemon_attach_parser.add_argument('background_id')
+    daemon_attach_parser.add_argument('--tail', type=int, default=None)
+
+    daemon_kill_parser = daemon_subparsers.add_parser('kill', help='stop a local daemon-style background session')
+    daemon_kill_parser.add_argument('background_id')
 
     chat_parser = subparsers.add_parser('agent-chat', help='run an interactive Python local-model chat loop')
     chat_parser.add_argument('prompt', nargs='?')
@@ -687,19 +853,155 @@ def main(argv: list[str] | None = None) -> int:
         print(f'{session.session_id}\n{len(session.messages)} messages\nin={session.input_tokens} out={session.output_tokens}')
         return 0
     if args.command == 'remote-mode':
-        print(run_remote_mode(args.target).as_text())
+        print(run_remote_mode(args.target, cwd=Path(args.cwd).resolve()).as_text())
         return 0
     if args.command == 'ssh-mode':
-        print(run_ssh_mode(args.target).as_text())
+        print(run_ssh_mode(args.target, cwd=Path(args.cwd).resolve()).as_text())
         return 0
     if args.command == 'teleport-mode':
-        print(run_teleport_mode(args.target).as_text())
+        print(run_teleport_mode(args.target, cwd=Path(args.cwd).resolve()).as_text())
         return 0
     if args.command == 'direct-connect-mode':
-        print(run_direct_connect(args.target).as_text())
+        print(run_direct_connect_mode(args.target, cwd=Path(args.cwd).resolve()).as_text())
         return 0
     if args.command == 'deep-link-mode':
-        print(run_deep_link(args.target).as_text())
+        print(run_deep_link_mode(args.target, cwd=Path(args.cwd).resolve()).as_text())
+        return 0
+    if args.command == 'remote-status':
+        runtime = RemoteRuntime.from_workspace(Path(args.cwd).resolve())
+        print('# Remote')
+        print()
+        print(runtime.render_summary())
+        return 0
+    if args.command == 'remote-profiles':
+        runtime = RemoteRuntime.from_workspace(Path(args.cwd).resolve())
+        print(runtime.render_profiles_index(query=args.query))
+        return 0
+    if args.command == 'remote-disconnect':
+        runtime = RemoteRuntime.from_workspace(Path(args.cwd).resolve())
+        print(runtime.disconnect().as_text())
+        return 0
+    if args.command == 'account-status':
+        runtime = AccountRuntime.from_workspace(Path(args.cwd).resolve())
+        print('# Account')
+        print()
+        print(runtime.render_summary())
+        return 0
+    if args.command == 'account-profiles':
+        runtime = AccountRuntime.from_workspace(Path(args.cwd).resolve())
+        print(runtime.render_profiles_index(query=args.query))
+        return 0
+    if args.command == 'account-login':
+        runtime = AccountRuntime.from_workspace(Path(args.cwd).resolve())
+        print(
+            runtime.login(
+                args.target,
+                provider=args.provider,
+                auth_mode=args.auth_mode,
+            ).as_text()
+        )
+        return 0
+    if args.command == 'account-logout':
+        runtime = AccountRuntime.from_workspace(Path(args.cwd).resolve())
+        print(runtime.logout().as_text())
+        return 0
+    if args.command == 'search-status':
+        runtime = SearchRuntime.from_workspace(Path(args.cwd).resolve())
+        if args.provider:
+            print(runtime.render_provider(args.provider))
+        else:
+            print('# Search')
+            print()
+            print(runtime.render_summary())
+        return 0
+    if args.command == 'search-providers':
+        runtime = SearchRuntime.from_workspace(Path(args.cwd).resolve())
+        print(runtime.render_providers_index(query=args.query))
+        return 0
+    if args.command == 'search-activate':
+        runtime = SearchRuntime.from_workspace(Path(args.cwd).resolve())
+        try:
+            report = runtime.activate_provider(args.provider)
+        except KeyError:
+            print(f'Unknown search provider: {args.provider}')
+            return 1
+        print(report.as_text())
+        return 0
+    if args.command == 'search':
+        runtime = SearchRuntime.from_workspace(Path(args.cwd).resolve())
+        try:
+            output = runtime.render_search_results(
+                args.query,
+                provider_name=args.provider,
+                max_results=args.max_results,
+                domains=tuple(args.domain),
+            )
+        except (KeyError, LookupError, OSError, ValueError) as exc:
+            print(f'Search failed: {exc}')
+            return 1
+        print(output)
+        return 0
+    if args.command == 'mcp-status':
+        runtime = MCPRuntime.from_workspace(Path(args.cwd).resolve())
+        print('# MCP')
+        print()
+        print(runtime.render_summary())
+        return 0
+    if args.command == 'mcp-resources':
+        runtime = MCPRuntime.from_workspace(Path(args.cwd).resolve())
+        print(runtime.render_resource_index(query=args.query))
+        return 0
+    if args.command == 'mcp-resource':
+        runtime = MCPRuntime.from_workspace(Path(args.cwd).resolve())
+        print(runtime.render_resource(args.uri))
+        return 0
+    if args.command == 'mcp-tools':
+        runtime = MCPRuntime.from_workspace(Path(args.cwd).resolve())
+        print(runtime.render_tool_index(query=args.query, server_name=args.server))
+        return 0
+    if args.command == 'mcp-call-tool':
+        runtime = MCPRuntime.from_workspace(Path(args.cwd).resolve())
+        arguments = json.loads(args.arguments_json)
+        if not isinstance(arguments, dict):
+            print('arguments-json must decode to a JSON object')
+            return 1
+        print(
+            runtime.render_tool_call(
+                args.tool_name,
+                arguments=arguments,
+                server_name=args.server,
+            )
+        )
+        return 0
+    if args.command == 'config-status':
+        runtime = ConfigRuntime.from_workspace(Path(args.cwd).resolve())
+        print('# Config')
+        print()
+        print(runtime.render_summary())
+        return 0
+    if args.command == 'config-effective':
+        runtime = ConfigRuntime.from_workspace(Path(args.cwd).resolve())
+        print(runtime.render_effective_config())
+        return 0
+    if args.command == 'config-source':
+        runtime = ConfigRuntime.from_workspace(Path(args.cwd).resolve())
+        print(runtime.render_source(args.source))
+        return 0
+    if args.command == 'config-get':
+        runtime = ConfigRuntime.from_workspace(Path(args.cwd).resolve())
+        print(runtime.render_value(args.key_path, source=args.source))
+        return 0
+    if args.command == 'config-set':
+        runtime = ConfigRuntime.from_workspace(Path(args.cwd).resolve())
+        value = json.loads(args.value_json)
+        mutation = runtime.set_value(args.key_path, value, source=args.source)
+        print('# Config')
+        print()
+        print(f'source={mutation.source_name}')
+        print(f'key_path={mutation.key_path}')
+        print(f'store_path={mutation.store_path}')
+        print(f'effective_key_count={mutation.effective_key_count}')
+        print(runtime.render_value(args.key_path))
         return 0
     if args.command == 'show-command':
         module = get_command(args.name)
@@ -729,53 +1031,9 @@ def main(argv: list[str] | None = None) -> int:
         _print_agent_result(result, show_transcript=args.show_transcript)
         return 0
     if args.command == 'agent-bg':
-        background_runtime = BackgroundSessionRuntime()
-        background_id = background_runtime.create_id()
-        forwarded_args: list[str] = []
-        _append_agent_forwarded_args(forwarded_args, args, include_backend=True)
-        forwarded_args.extend(['--background-root', str(background_runtime.root)])
-        command = build_background_worker_command(
-            background_id=background_id,
-            prompt=args.prompt,
-            forwarded_args=forwarded_args,
-        )
-        record = background_runtime.launch(
-            command,
-            prompt=args.prompt,
-            workspace_cwd=Path(args.cwd).resolve(),
-            model=args.model,
-            background_id=background_id,
-            process_cwd=Path(__file__).resolve().parent.parent,
-        )
-        print('# Background Session')
-        print(f'background_id={record.background_id}')
-        print(f'pid={record.pid}')
-        print(f'log_path={record.log_path}')
-        print(f'record_path={record.record_path}')
-        return 0
+        return _launch_background_agent(args)
     if args.command == 'agent-bg-worker':
-        background_runtime = BackgroundSessionRuntime(Path(args.background_root))
-        exit_code = 1
-        stop_reason = 'worker_failed'
-        session_id = None
-        session_path = None
-        try:
-            agent = _build_agent(args)
-            result = agent.run(args.prompt)
-            _print_agent_result(result, show_transcript=args.show_transcript)
-            exit_code = 0
-            stop_reason = result.stop_reason or 'completed'
-            session_id = result.session_id
-            session_path = result.session_path
-            return 0
-        finally:
-            background_runtime.mark_finished(
-                args.background_id,
-                exit_code=exit_code,
-                stop_reason=stop_reason,
-                session_id=session_id,
-                session_path=session_path,
-            )
+        return _run_background_worker(args)
     if args.command == 'agent-ps':
         print(BackgroundSessionRuntime().render_ps())
         return 0
@@ -804,6 +1062,39 @@ def main(argv: list[str] | None = None) -> int:
         if record.exit_code is not None:
             print(f'exit_code={record.exit_code}')
         return 0
+    if args.command == 'daemon':
+        if args.daemon_command == 'start':
+            return _launch_background_agent(args)
+        if args.daemon_command == 'worker':
+            return _run_background_worker(args)
+        if args.daemon_command == 'ps':
+            print(BackgroundSessionRuntime().render_ps())
+            return 0
+        if args.daemon_command == 'logs':
+            print(
+                BackgroundSessionRuntime().render_logs(
+                    args.background_id,
+                    tail=args.tail,
+                )
+            )
+            return 0
+        if args.daemon_command == 'attach':
+            print(
+                BackgroundSessionRuntime().render_attach(
+                    args.background_id,
+                    tail=args.tail,
+                )
+            )
+            return 0
+        if args.daemon_command == 'kill':
+            record = BackgroundSessionRuntime().kill(args.background_id)
+            print('# Background Session')
+            print(f'background_id={record.background_id}')
+            print(f'status={record.status}')
+            print(f'pid={record.pid}')
+            if record.exit_code is not None:
+                print(f'exit_code={record.exit_code}')
+            return 0
     if args.command == 'agent-chat':
         agent = _build_agent(args)
         return _run_agent_chat_loop(

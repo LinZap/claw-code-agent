@@ -11,7 +11,13 @@ from .task_runtime import TaskRuntime
 
 
 DEFAULT_PLAN_RUNTIME_PATH = Path('.port_sessions') / 'plan_runtime.json'
-VALID_PLAN_STATUSES = ('pending', 'in_progress', 'completed')
+VALID_PLAN_STATUSES = (
+    'pending',
+    'in_progress',
+    'completed',
+    'blocked',
+    'cancelled',
+)
 
 
 @dataclass(frozen=True)
@@ -21,6 +27,9 @@ class PlanStep:
     task_id: str | None = None
     description: str | None = None
     priority: str | None = None
+    active_form: str | None = None
+    owner: str | None = None
+    depends_on: tuple[str, ...] = ()
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -29,6 +38,9 @@ class PlanStep:
             'task_id': self.task_id,
             'description': self.description,
             'priority': self.priority,
+            'active_form': self.active_form,
+            'owner': self.owner,
+            'depends_on': list(self.depends_on),
         }
 
     @classmethod
@@ -53,6 +65,19 @@ class PlanStep:
                 and payload.get('priority').strip()
                 else None
             ),
+            active_form=(
+                str(payload.get('active_form'))
+                if isinstance(payload.get('active_form'), str)
+                and payload.get('active_form').strip()
+                else None
+            ),
+            owner=(
+                str(payload.get('owner'))
+                if isinstance(payload.get('owner'), str)
+                and payload.get('owner').strip()
+                else None
+            ),
+            depends_on=_normalize_id_list(payload.get('depends_on')),
         )
 
 
@@ -147,6 +172,19 @@ class PlanRuntime:
                         and item.get('priority').strip()
                         else None
                     ),
+                    active_form=(
+                        item.get('active_form').strip()
+                        if isinstance(item.get('active_form'), str)
+                        and item.get('active_form').strip()
+                        else None
+                    ),
+                    owner=(
+                        item.get('owner').strip()
+                        if isinstance(item.get('owner'), str)
+                        and item.get('owner').strip()
+                        else None
+                    ),
+                    depends_on=_normalize_id_list(item.get('depends_on')),
                 )
             )
         mutation = self._persist(
@@ -158,6 +196,10 @@ class PlanRuntime:
             ),
         )
         if sync_tasks and task_runtime is not None:
+            dependents: dict[str, list[str]] = {}
+            for step in self.steps:
+                for dependency in step.depends_on:
+                    dependents.setdefault(dependency, []).append(step.task_id or '')
             task_items = [
                 {
                     'task_id': step.task_id or f'plan_{index}',
@@ -165,6 +207,14 @@ class PlanRuntime:
                     'description': step.description,
                     'status': _plan_status_to_task_status(step.status),
                     'priority': step.priority,
+                    'active_form': step.active_form,
+                    'owner': step.owner,
+                    'blocked_by': list(step.depends_on),
+                    'blocks': sorted(
+                        dependency
+                        for dependency in dependents.get(step.task_id or f'plan_{index}', [])
+                        if dependency
+                    ),
                 }
                 for index, step in enumerate(self.steps, start=1)
             ]
@@ -238,6 +288,12 @@ class PlanRuntime:
             lines.append('- ' + '; '.join(details))
             if step.description:
                 lines.append(f'  description: {step.description}')
+            if step.active_form:
+                lines.append(f'  active_form: {step.active_form}')
+            if step.owner:
+                lines.append(f'  owner: {step.owner}')
+            if step.depends_on:
+                lines.append(f"  depends_on: {', '.join(step.depends_on)}")
         return '\n'.join(lines)
 
     def _persist(
@@ -297,6 +353,7 @@ def _normalize_plan_status(value: Any) -> str:
             'complete': 'completed',
             'in-progress': 'in_progress',
             'in progress': 'in_progress',
+            'blocked_on': 'blocked',
         }
         lowered = aliases.get(lowered, lowered)
         if lowered in VALID_PLAN_STATUSES:
@@ -306,10 +363,30 @@ def _normalize_plan_status(value: Any) -> str:
 
 def _plan_status_to_task_status(status: str) -> str:
     if status == 'completed':
-        return 'done'
+        return 'completed'
     if status == 'in_progress':
         return 'in_progress'
-    return 'todo'
+    if status == 'blocked':
+        return 'blocked'
+    if status == 'cancelled':
+        return 'cancelled'
+    return 'pending'
+
+
+def _normalize_id_list(value: Any) -> tuple[str, ...]:
+    if not isinstance(value, list):
+        return ()
+    normalized: list[str] = []
+    seen: set[str] = set()
+    for item in value:
+        if not isinstance(item, str):
+            continue
+        text = item.strip()
+        if not text or text in seen:
+            continue
+        normalized.append(text)
+        seen.add(text)
+    return tuple(normalized)
 
 
 def _snapshot_text(text: str, limit: int = 240) -> str:

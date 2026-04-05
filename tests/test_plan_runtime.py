@@ -51,7 +51,8 @@ class PlanRuntimeTests(unittest.TestCase):
                     },
                     {
                         'step': 'Patch the tool registry',
-                        'status': 'pending',
+                        'status': 'blocked',
+                        'depends_on': ['plan_1'],
                     },
                 ],
                 explanation='Work through the runtime in two phases.',
@@ -59,12 +60,15 @@ class PlanRuntimeTests(unittest.TestCase):
             )
             rendered_plan = plan_runtime.render_plan()
             rendered_tasks = task_runtime.render_tasks()
+            rendered_task = task_runtime.render_task('plan_2')
 
         self.assertEqual(mutation.after_count, 2)
         self.assertEqual(mutation.synced_tasks, 2)
         self.assertIn('Inspect the runtime loop', rendered_plan)
         self.assertIn('Work through the runtime in two phases.', rendered_plan)
+        self.assertIn('depends_on: plan_1', rendered_plan)
         self.assertIn('Inspect the runtime loop', rendered_tasks)
+        self.assertIn('Blocked By: plan_1', rendered_task)
 
     def test_plan_tools_execute_against_runtime(self) -> None:
         with tempfile.TemporaryDirectory() as tmp_dir:

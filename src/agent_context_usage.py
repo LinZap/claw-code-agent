@@ -1,12 +1,12 @@
 from __future__ import annotations
 
 import json
-import math
 import re
 from dataclasses import dataclass
 
 from .agent_prompting import SYSTEM_PROMPT_DYNAMIC_BOUNDARY
 from .agent_session import AgentMessage, AgentSessionState
+from .tokenizer_runtime import describe_token_counter, count_tokens
 
 _PATH_HEADER_RE = re.compile(r'^## ((?:/|[A-Za-z]:[\\/]).+)$', re.MULTILINE)
 
@@ -48,12 +48,13 @@ class ContextUsageReport:
     system_context_entries: tuple[UsageEntry, ...]
     memory_files: tuple[UsageEntry, ...]
     message_breakdown: MessageBreakdown
+    token_counter_backend: str
+    token_counter_source: str
+    token_counter_accurate: bool
 
 
-def estimate_tokens(text: str) -> int:
-    if not text:
-        return 0
-    return max(1, math.ceil(len(text) / 4))
+def estimate_tokens(text: str, model: str | None = None) -> int:
+    return count_tokens(text, model)
 
 
 def infer_context_window(model: str) -> int:
@@ -78,21 +79,23 @@ def collect_context_usage(
     strategy: str,
 ) -> ContextUsageReport:
     raw_max_tokens = infer_context_window(model)
+    token_counter = describe_token_counter(model)
+    count = lambda text: estimate_tokens(text, model)  # noqa: E731
     system_prompt_sections = tuple(
-        UsageEntry(name=_section_name(part, idx), tokens=estimate_tokens(part))
+        UsageEntry(name=_section_name(part, idx), tokens=count(part))
         for idx, part in enumerate(session.system_prompt_parts, start=1)
     )
     system_context_entries = tuple(
-        UsageEntry(name=key, tokens=estimate_tokens(f'{key}: {value}'))
+        UsageEntry(name=key, tokens=count(f'{key}: {value}'))
         for key, value in session.system_context.items()
         if value
     )
     user_context_entries = tuple(
-        UsageEntry(name=key, tokens=estimate_tokens(_render_user_context_chunk(key, value)))
+        UsageEntry(name=key, tokens=count(_render_user_context_chunk(key, value)))
         for key, value in session.user_context.items()
         if value
     )
-    memory_files = tuple(_parse_memory_usage(session.user_context.get('claudeMd')))
+    memory_files = tuple(_parse_memory_usage(session.user_context.get('claudeMd'), model=model))
 
     user_context_tokens = sum(entry.tokens for entry in user_context_entries)
     system_prompt_tokens = (
@@ -112,20 +115,20 @@ def collect_context_usage(
         if _is_user_context_message(session, index, message):
             continue
         if message.role == 'user':
-            conversation_user_tokens += estimate_tokens(message.content)
+            conversation_user_tokens += count(message.content)
             continue
         if message.role == 'assistant':
-            assistant_tokens += estimate_tokens(message.content)
+            assistant_tokens += count(message.content)
             for tool_call in message.tool_calls:
                 serialized = json.dumps(tool_call, ensure_ascii=True)
-                tokens = estimate_tokens(serialized)
+                tokens = count(serialized)
                 tool_call_tokens += tokens
                 tool_name = _extract_tool_call_name(tool_call)
                 call_totals = tool_usage.setdefault(tool_name, [0, 0])
                 call_totals[0] += tokens
             continue
         if message.role == 'tool':
-            tokens = estimate_tokens(message.content)
+            tokens = count(message.content)
             tool_result_tokens += tokens
             result_totals = tool_usage.setdefault(message.name or 'tool', [0, 0])
             result_totals[1] += tokens
@@ -176,6 +179,9 @@ def collect_context_usage(
             user_context_tokens=user_context_tokens,
             tool_calls_by_type=tool_calls_by_type,
         ),
+        token_counter_backend=token_counter.backend,
+        token_counter_source=token_counter.source,
+        token_counter_accurate=token_counter.accurate,
     )
 
 
@@ -185,6 +191,7 @@ def format_context_usage(report: ContextUsageReport) -> str:
         '',
         f'**Model:** {report.model}  ',
         f'**Estimated tokens:** {_format_tokens(report.total_tokens)} / {_format_tokens(report.raw_max_tokens)} ({report.percentage:.1f}%)  ',
+        f'**Token counter:** {report.token_counter_backend} ({report.token_counter_source}){" [accurate]" if report.token_counter_accurate else " [fallback]"}  ',
         f'**Context strategy:** {report.strategy}  ',
         f'**Messages in session:** {report.message_count}',
         '',
@@ -330,7 +337,7 @@ def _is_user_context_message(
     )
 
 
-def _parse_memory_usage(claude_md: str | None) -> list[UsageEntry]:
+def _parse_memory_usage(claude_md: str | None, *, model: str | None = None) -> list[UsageEntry]:
     if not claude_md:
         return []
     matches = list(_PATH_HEADER_RE.finditer(claude_md))
@@ -341,7 +348,7 @@ def _parse_memory_usage(claude_md: str | None) -> list[UsageEntry]:
         start = match.end()
         end = matches[idx + 1].start() if idx + 1 < len(matches) else len(claude_md)
         content = claude_md[start:end].strip()
-        entries.append(UsageEntry(name=match.group(1), tokens=estimate_tokens(content)))
+        entries.append(UsageEntry(name=match.group(1), tokens=estimate_tokens(content, model)))
     return entries
 
 

@@ -1,5 +1,6 @@
 """Python porting workspace for the Claude Code rewrite effort."""
 
+from .account_runtime import AccountRuntime, AccountProfile, AccountSessionState, AccountStatusReport
 from .agent_context import (
     AgentContextSnapshot,
     build_context_snapshot,
@@ -15,17 +16,20 @@ from .agent_tools import build_tool_context, default_tool_registry, execute_tool
 from .agent_types import AgentPermissions, AgentRunResult, AgentRuntimeConfig, ModelConfig
 from .background_runtime import BackgroundSessionRuntime
 from .commands import PORTED_COMMANDS, build_command_backlog
-from .mcp_runtime import MCPRuntime
+from .config_runtime import ConfigMutation, ConfigRuntime
+from .mcp_runtime import MCPRuntime, MCPResource, MCPServerProfile, MCPTool
 from .parity_audit import ParityAuditResult, run_parity_audit
 from .plan_runtime import PlanRuntime, PlanStep
 from .plugin_runtime import PluginRuntime
 from .port_manifest import PortManifest, build_port_manifest
 from .query_engine import QueryEnginePort, TurnResult
 from .runtime import PortRuntime, RuntimeSession
+from .search_runtime import SearchProviderProfile, SearchResult, SearchRuntime, SearchStatusReport
 from .session_store import StoredSession, load_session, save_session
 from .system_init import build_system_init_message
 from .task import PortingTask
 from .task_runtime import TaskRuntime
+from .tokenizer_runtime import TokenCounterInfo, clear_token_counter_cache, count_tokens, describe_token_counter
 from .tools import PORTED_TOOLS, build_tool_backlog
 
 __all__ = [
@@ -34,11 +38,20 @@ __all__ = [
     'AgentPermissions',
     'AgentRunResult',
     'AgentRuntimeConfig',
+    'AccountProfile',
+    'AccountRuntime',
+    'AccountSessionState',
+    'AccountStatusReport',
     'AgentMessage',
     'AgentSessionState',
     'BackgroundSessionRuntime',
+    'ConfigMutation',
+    'ConfigRuntime',
     'LocalCodingAgent',
+    'MCPResource',
     'MCPRuntime',
+    'MCPServerProfile',
+    'MCPTool',
     'ModelConfig',
     'ParityAuditResult',
     'PlanRuntime',
@@ -49,8 +62,13 @@ __all__ = [
     'PortingTask',
     'QueryEnginePort',
     'RuntimeSession',
+    'SearchProviderProfile',
+    'SearchResult',
+    'SearchRuntime',
+    'SearchStatusReport',
     'StoredSession',
     'TaskRuntime',
+    'TokenCounterInfo',
     'TurnResult',
     'PORTED_COMMANDS',
     'PORTED_TOOLS',
@@ -61,7 +79,10 @@ __all__ = [
     'build_tool_backlog',
     'build_tool_context',
     'clear_context_caches',
+    'clear_token_counter_cache',
+    'count_tokens',
     'default_tool_registry',
+    'describe_token_counter',
     'execute_tool',
     'get_system_context',
     'get_user_context',

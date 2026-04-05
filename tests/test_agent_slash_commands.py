@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import tempfile
 import unittest
+import json
+import sys
 from pathlib import Path
 from unittest.mock import patch
 
@@ -10,6 +12,55 @@ from src.agent_slash_commands import looks_like_command, parse_slash_command
 from src.agent_types import AgentRuntimeConfig, ModelConfig
 from src.plan_runtime import PlanRuntime
 from src.task_runtime import TaskRuntime
+
+
+class _FakeHTTPResponse:
+    def __init__(self, payload: str) -> None:
+        self.payload = payload
+
+    def read(self) -> bytes:
+        return self.payload.encode('utf-8')
+
+    def __enter__(self) -> '_FakeHTTPResponse':
+        return self
+
+    def __exit__(self, exc_type, exc, tb) -> None:
+        return None
+
+
+def _write_fake_mcp_server(workspace: Path) -> Path:
+    server_path = workspace / 'fake_mcp_server.py'
+    server_path.write_text(
+        (
+            'import json, sys\n'
+            'TOOLS = [{"name": "echo", "description": "Echo text", "inputSchema": {"type": "object", "properties": {"text": {"type": "string"}}}}]\n'
+            'for raw in sys.stdin:\n'
+            '    raw = raw.strip()\n'
+            '    if not raw:\n'
+            '        continue\n'
+            '    message = json.loads(raw)\n'
+            '    method = message.get("method")\n'
+            '    if method == "initialize":\n'
+            '        response = {"jsonrpc": "2.0", "id": message.get("id"), "result": {"protocolVersion": "2025-11-25", "capabilities": {"resources": {}, "tools": {}}, "serverInfo": {"name": "fake-remote", "version": "1.0.0"}}}\n'
+            '        print(json.dumps(response), flush=True)\n'
+            '        continue\n'
+            '    if method == "notifications/initialized":\n'
+            '        continue\n'
+            '    if method == "tools/list":\n'
+            '        response = {"jsonrpc": "2.0", "id": message.get("id"), "result": {"tools": TOOLS}}\n'
+            '        print(json.dumps(response), flush=True)\n'
+            '        continue\n'
+            '    if method == "tools/call":\n'
+            '        text = message.get("params", {}).get("arguments", {}).get("text", "")\n'
+            '        response = {"jsonrpc": "2.0", "id": message.get("id"), "result": {"content": [{"type": "text", "text": "echo:" + text}], "isError": False}}\n'
+            '        print(json.dumps(response), flush=True)\n'
+            '        continue\n'
+            '    response = {"jsonrpc": "2.0", "id": message.get("id"), "result": {"resources": []}}\n'
+            '    print(json.dumps(response), flush=True)\n'
+        ),
+        encoding='utf-8',
+    )
+    return server_path
 
 
 class AgentSlashCommandTests(unittest.TestCase):
@@ -84,6 +135,142 @@ class AgentSlashCommandTests(unittest.TestCase):
         self.assertIn('mcp notes', resource_result.final_output)
         self.assertIn('# MCP', legacy_mcp_result.final_output)
 
+    def test_mcp_tools_command_renders_transport_backed_tools(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            workspace = Path(tmp_dir)
+            server_path = _write_fake_mcp_server(workspace)
+            (workspace / '.claw-mcp.json').write_text(
+                json.dumps(
+                    {
+                        'mcpServers': {
+                            'remote': {
+                                'command': sys.executable,
+                                'args': ['-u', str(server_path)],
+                            }
+                        }
+                    }
+                ),
+                encoding='utf-8',
+            )
+            agent = LocalCodingAgent(
+                model_config=ModelConfig(model='Qwen/Qwen3-Coder-30B-A3B-Instruct'),
+                runtime_config=AgentRuntimeConfig(cwd=workspace),
+            )
+            tools_result = agent.run('/mcp tools')
+            tool_result = agent.run('/mcp tool echo')
+        self.assertIn('# MCP Tools', tools_result.final_output)
+        self.assertIn('echo', tools_result.final_output)
+        self.assertIn('# MCP Tool Result', tool_result.final_output)
+        self.assertIn('echo:', tool_result.final_output)
+
+    def test_search_commands_render_and_update_local_search_runtime(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            workspace = Path(tmp_dir)
+            (workspace / '.claw-search.json').write_text(
+                (
+                    '{"providers":['
+                    '{"name":"local-search","provider":"searxng","baseUrl":"http://127.0.0.1:8080"},'
+                    '{"name":"backup-search","provider":"searxng","baseUrl":"http://127.0.0.2:8080"}'
+                    ']}'
+                ),
+                encoding='utf-8',
+            )
+            agent = LocalCodingAgent(
+                model_config=ModelConfig(model='Qwen/Qwen3-Coder-30B-A3B-Instruct'),
+                runtime_config=AgentRuntimeConfig(cwd=workspace),
+            )
+            with patch(
+                'src.search_runtime.request.urlopen',
+                return_value=_FakeHTTPResponse(
+                    '{"results":[{"title":"Alpha","url":"https://example.com/alpha","content":"Search snippet"}]}'
+                ),
+            ):
+                search_result = agent.run('/search alpha query')
+            providers_result = agent.run('/search providers')
+            activate_result = agent.run('/search use backup-search')
+            provider_result = agent.run('/search provider backup-search')
+        self.assertIn('# Web Search', search_result.final_output)
+        self.assertIn('Alpha', search_result.final_output)
+        self.assertIn('# Search Providers', providers_result.final_output)
+        self.assertIn('local-search', providers_result.final_output)
+        self.assertIn('backup-search', providers_result.final_output)
+        self.assertIn('provider=backup-search', activate_result.final_output)
+        self.assertIn('# Search Provider', provider_result.final_output)
+        self.assertIn('backup-search', provider_result.final_output)
+
+    def test_remote_commands_render_and_update_local_remote_runtime(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            workspace = Path(tmp_dir)
+            (workspace / '.claw-remote.json').write_text(
+                (
+                    '{"profiles":[{"name":"staging","mode":"ssh","target":"dev@staging",'
+                    '"workspaceCwd":"/srv/app","sessionUrl":"wss://remote/session"}]}'
+                ),
+                encoding='utf-8',
+            )
+            agent = LocalCodingAgent(
+                model_config=ModelConfig(model='Qwen/Qwen3-Coder-30B-A3B-Instruct'),
+                runtime_config=AgentRuntimeConfig(cwd=workspace),
+            )
+            remotes_result = agent.run('/remotes')
+            remote_result = agent.run('/remote')
+            ssh_result = agent.run('/ssh staging')
+            disconnect_result = agent.run('/disconnect')
+        self.assertIn('# Remote Profiles', remotes_result.final_output)
+        self.assertIn('staging', remotes_result.final_output)
+        self.assertIn('# Remote', remote_result.final_output)
+        self.assertIn('Configured remote profiles: 1', remote_result.final_output)
+        self.assertIn('mode=ssh', ssh_result.final_output)
+        self.assertIn('profile=staging', ssh_result.final_output)
+        self.assertIn('connected=False', disconnect_result.final_output)
+
+    def test_account_commands_render_and_update_local_account_runtime(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            workspace = Path(tmp_dir)
+            (workspace / '.claw-account.json').write_text(
+                '{"profiles":[{"name":"local","provider":"openai","identity":"dev@example.com"}]}',
+                encoding='utf-8',
+            )
+            agent = LocalCodingAgent(
+                model_config=ModelConfig(model='Qwen/Qwen3-Coder-30B-A3B-Instruct'),
+                runtime_config=AgentRuntimeConfig(cwd=workspace),
+            )
+            account_result = agent.run('/account')
+            profiles_result = agent.run('/account profiles')
+            login_result = agent.run('/login local')
+            logout_result = agent.run('/logout')
+        self.assertIn('# Account', account_result.final_output)
+        self.assertIn('Configured account profiles: 1', account_result.final_output)
+        self.assertIn('# Account Profiles', profiles_result.final_output)
+        self.assertIn('dev@example.com', profiles_result.final_output)
+        self.assertIn('profile=local', login_result.final_output)
+        self.assertIn('logged_in=False', logout_result.final_output)
+
+    def test_config_commands_render_local_reports(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            workspace = Path(tmp_dir)
+            claude_dir = workspace / '.claude'
+            claude_dir.mkdir()
+            (claude_dir / 'settings.json').write_text(
+                '{"review":{"mode":"strict"}}',
+                encoding='utf-8',
+            )
+            agent = LocalCodingAgent(
+                model_config=ModelConfig(model='Qwen/Qwen3-Coder-30B-A3B-Instruct'),
+                runtime_config=AgentRuntimeConfig(cwd=workspace),
+            )
+            config_result = agent.run('/config')
+            effective_result = agent.run('/config effective')
+            value_result = agent.run('/config get review.mode')
+            source_result = agent.run('/settings source project')
+        self.assertIn('# Config', config_result.final_output)
+        self.assertIn('Config sources: 1', config_result.final_output)
+        self.assertIn('# Config Effective', effective_result.final_output)
+        self.assertIn('"review"', effective_result.final_output)
+        self.assertIn('# Config Value', value_result.final_output)
+        self.assertIn('"strict"', value_result.final_output)
+        self.assertIn('# Config Source', source_result.final_output)
+
     def test_tasks_and_task_commands_render_local_reports(self) -> None:
         with tempfile.TemporaryDirectory() as tmp_dir:
             workspace = Path(tmp_dir)
@@ -100,11 +287,14 @@ class AgentSlashCommandTests(unittest.TestCase):
             tasks_result = agent.run('/tasks')
             task_result = agent.run(f'/task {task_id}')
             todo_result = agent.run('/todo in_progress')
+            next_result = agent.run('/task-next')
         self.assertIn('# Tasks', tasks_result.final_output)
         self.assertIn(task_id, tasks_result.final_output)
         self.assertIn('# Task', task_result.final_output)
         self.assertIn('in_progress', task_result.final_output)
         self.assertIn('# Tasks', todo_result.final_output)
+        self.assertIn('# Next Tasks', next_result.final_output)
+        self.assertIn(task_id, next_result.final_output)
 
     def test_plan_command_renders_local_report(self) -> None:
         with tempfile.TemporaryDirectory() as tmp_dir:
@@ -133,6 +323,7 @@ class AgentSlashCommandTests(unittest.TestCase):
         self.assertIn('# Tools', tools_result.final_output)
         self.assertIn('`read_file`', tools_result.final_output)
         self.assertIn('# Status', status_result.final_output)
+        self.assertIn('Token counter:', status_result.final_output)
         self.assertIn('Last run: none', status_result.final_output)
 
     def test_hooks_and_trust_commands_render_local_reports(self) -> None:

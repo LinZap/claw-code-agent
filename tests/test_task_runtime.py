@@ -46,12 +46,12 @@ class TaskRuntimeTests(unittest.TestCase):
                 status='in_progress',
             )
             assert created.task is not None
-            runtime.update_task(created.task.task_id, status='done')
+            runtime.update_task(created.task.task_id, status='completed')
             rendered_tasks = runtime.render_tasks()
             rendered_task = runtime.render_task(created.task.task_id)
 
         self.assertIn('Implement task runtime', rendered_tasks)
-        self.assertIn('done', rendered_task)
+        self.assertIn('completed', rendered_task)
 
     def test_task_tools_execute_against_runtime(self) -> None:
         with tempfile.TemporaryDirectory() as tmp_dir:
@@ -67,11 +67,17 @@ class TaskRuntimeTests(unittest.TestCase):
             create_result = execute_tool(
                 default_tool_registry(),
                 'task_create',
-                {'title': 'Review task tools', 'status': 'todo'},
+                {'title': 'Review task tools', 'status': 'pending'},
                 context,
             )
             self.assertTrue(create_result.ok)
             task_id = str(create_result.metadata.get('task_id'))
+            next_result = execute_tool(
+                default_tool_registry(),
+                'task_next',
+                {},
+                context,
+            )
             list_result = execute_tool(
                 default_tool_registry(),
                 'task_list',
@@ -87,7 +93,7 @@ class TaskRuntimeTests(unittest.TestCase):
             update_result = execute_tool(
                 default_tool_registry(),
                 'task_update',
-                {'task_id': task_id, 'status': 'done'},
+                {'task_id': task_id, 'status': 'completed'},
                 context,
             )
             todo_result = execute_tool(
@@ -97,12 +103,84 @@ class TaskRuntimeTests(unittest.TestCase):
                 context,
             )
 
+        self.assertIn('Review task tools', next_result.content)
         self.assertIn(task_id, list_result.content)
         self.assertIn('Review task tools', get_result.content)
         self.assertTrue(update_result.ok)
-        self.assertEqual(update_result.metadata.get('task_status'), 'done')
+        self.assertEqual(update_result.metadata.get('task_status'), 'completed')
         self.assertTrue(todo_result.ok)
         self.assertEqual(todo_result.metadata.get('total_tasks'), 1)
+
+    def test_next_tasks_respects_dependencies_and_completion(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            workspace = Path(tmp_dir)
+            runtime = TaskRuntime.from_workspace(workspace)
+            runtime.replace_tasks(
+                [
+                    {'task_id': 'scan', 'title': 'Scan workspace', 'status': 'pending'},
+                    {
+                        'task_id': 'patch',
+                        'title': 'Patch files',
+                        'status': 'blocked',
+                        'blocked_by': ['scan'],
+                    },
+                ]
+            )
+            first_next = runtime.render_next_tasks()
+            runtime.complete_task('scan')
+            second_next = runtime.render_next_tasks()
+
+        self.assertIn('Scan workspace', first_next)
+        self.assertNotIn('Patch files', first_next)
+        self.assertIn('Patch files', second_next)
+
+    def test_task_execution_tools_handle_block_start_and_complete(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            workspace = Path(tmp_dir)
+            runtime = TaskRuntime.from_workspace(workspace)
+            runtime.replace_tasks(
+                [
+                    {'task_id': 'scan', 'title': 'Scan workspace', 'status': 'pending'},
+                    {
+                        'task_id': 'patch',
+                        'title': 'Patch files',
+                        'status': 'blocked',
+                        'blocked_by': ['scan'],
+                    },
+                ]
+            )
+            context = build_tool_context(
+                AgentRuntimeConfig(
+                    cwd=workspace,
+                    permissions=AgentPermissions(allow_file_write=True),
+                ),
+                task_runtime=runtime,
+            )
+            blocked_start = execute_tool(
+                default_tool_registry(),
+                'task_start',
+                {'task_id': 'patch'},
+                context,
+            )
+            complete_scan = execute_tool(
+                default_tool_registry(),
+                'task_complete',
+                {'task_id': 'scan'},
+                context,
+            )
+            start_patch = execute_tool(
+                default_tool_registry(),
+                'task_start',
+                {'task_id': 'patch', 'owner': 'agent_1', 'active_form': 'Patching files'},
+                context,
+            )
+
+        self.assertTrue(blocked_start.ok)
+        self.assertIn('[blocked]', blocked_start.content)
+        self.assertTrue(complete_scan.ok)
+        self.assertTrue(start_patch.ok)
+        self.assertIn('[in_progress]', start_patch.content)
+        self.assertEqual(runtime.get_task('patch').owner, 'agent_1')
 
     def test_agent_can_use_task_tools_in_model_loop(self) -> None:
         responses = [
@@ -118,7 +196,7 @@ class TaskRuntimeTests(unittest.TestCase):
                                     'type': 'function',
                                     'function': {
                                         'name': 'task_create',
-                                        'arguments': '{"title": "Review runtime tasks", "status": "todo"}',
+                                        'arguments': '{"title": "Review runtime tasks", "status": "pending"}',
                                     },
                                 }
                             ],

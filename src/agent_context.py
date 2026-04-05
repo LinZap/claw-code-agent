@@ -9,10 +9,14 @@ from functools import lru_cache
 from pathlib import Path
 
 from .agent_plugin_cache import load_plugin_cache_summary
+from .account_runtime import AccountRuntime
+from .config_runtime import ConfigRuntime
 from .hook_policy import HookPolicyRuntime
 from .mcp_runtime import MCPRuntime
 from .plan_runtime import PlanRuntime
 from .plugin_runtime import PluginRuntime
+from .remote_runtime import RemoteRuntime
+from .search_runtime import SearchRuntime
 from .task_runtime import TaskRuntime
 from .agent_types import AgentRuntimeConfig
 
@@ -224,6 +228,18 @@ def _get_user_context_cached(
     mcp_runtime = MCPRuntime.from_workspace(Path(cwd), additional_working_directories)
     if mcp_runtime.resources:
         context['mcpRuntime'] = mcp_runtime.render_summary()
+    remote_runtime = RemoteRuntime.from_workspace(Path(cwd), additional_working_directories)
+    if remote_runtime.has_remote_config():
+        context['remoteRuntime'] = remote_runtime.render_summary()
+    search_runtime = SearchRuntime.from_workspace(Path(cwd), additional_working_directories)
+    if search_runtime.has_search_runtime():
+        context['searchRuntime'] = search_runtime.render_summary()
+    account_runtime = AccountRuntime.from_workspace(Path(cwd), additional_working_directories)
+    if account_runtime.has_account_state():
+        context['accountRuntime'] = account_runtime.render_summary()
+    config_runtime = ConfigRuntime.from_workspace(Path(cwd))
+    if config_runtime.has_config():
+        context['configRuntime'] = config_runtime.render_summary()
     plan_runtime = PlanRuntime.from_workspace(Path(cwd))
     if plan_runtime.steps:
         context['planRuntime'] = plan_runtime.render_summary()
