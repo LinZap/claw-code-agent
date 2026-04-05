@@ -2224,20 +2224,28 @@ def _drain_registered_streams(
             pass
 
 
-_SENSITIVE_ENV_PREFIXES = (
-    'AWS_SECRET', 'AWS_SESSION_TOKEN',
-    'GITHUB_TOKEN', 'GH_TOKEN',
-    'OPENAI_API_KEY', 'ANTHROPIC_API_KEY',
-    'DATABASE_PASSWORD', 'DB_PASSWORD',
-    'SECRET_KEY', 'PRIVATE_KEY',
+_SENSITIVE_ENV_KEYWORDS = (
+    'SECRET',
+    'TOKEN',
+    'PASSWORD',
+    'PRIVATE_KEY',
+    'API_KEY',
+    'CREDENTIAL',
+    'AUTH',
 )
+
+
+def _is_sensitive_env_var(name: str) -> bool:
+    """Return True if the environment variable name likely contains a secret."""
+    upper = name.upper()
+    return any(keyword in upper for keyword in _SENSITIVE_ENV_KEYWORDS)
 
 
 def _build_subprocess_env(context: ToolExecutionContext) -> dict[str, str]:
     env = {
         key: value
         for key, value in os.environ.items()
-        if not any(key.upper().startswith(prefix) for prefix in _SENSITIVE_ENV_PREFIXES)
+        if not _is_sensitive_env_var(key)
     }
     env.update(context.extra_env)
     return env
