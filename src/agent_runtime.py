@@ -1054,8 +1054,12 @@ class LocalCodingAgent:
             usage=usage,
         )
         assistant_message = session.messages[assistant_index]
+        content = assistant_message.content
+        if self.model_config.strip_thinking_tags:
+            from .openai_compat import _strip_thinking_tags
+            content = _strip_thinking_tags(content)
         turn = AssistantTurn(
-            content=assistant_message.content,
+            content=content,
             tool_calls=self._tool_calls_from_message(assistant_message.tool_calls),
             finish_reason=finish_reason,
             raw_message=assistant_message.to_openai_message(),

@@ -97,6 +97,11 @@ class ModelConfig:
     base_url: str = 'http://127.0.0.1:8000/v1'
     api_key: str = 'local-token'
     temperature: float = 0.0
+    top_p: float | None = None
+    top_k: int | None = None
+    min_p: float | None = None
+    presence_penalty: float | None = None
+    strip_thinking_tags: bool = False
     timeout_seconds: float = 120.0
     pricing: ModelPricing = field(default_factory=ModelPricing)
 

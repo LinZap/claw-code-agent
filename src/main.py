@@ -59,6 +59,11 @@ def _add_agent_common_args(parser: argparse.ArgumentParser, *, include_backend: 
         parser.add_argument('--timeout-seconds', type=float, default=120.0)
         parser.add_argument('--input-cost-per-million', type=float, default=0.0)
         parser.add_argument('--output-cost-per-million', type=float, default=0.0)
+        parser.add_argument('--top-p', type=float, default=None)
+        parser.add_argument('--top-k', type=int, default=None)
+        parser.add_argument('--min-p', type=float, default=None)
+        parser.add_argument('--presence-penalty', type=float, default=None)
+        parser.add_argument('--strip-thinking-tags', action='store_true')
     parser.add_argument('--cwd', default='.')
     parser.add_argument('--add-dir', action='append', default=[])
     parser.add_argument('--disable-claude-md', action='store_true')
@@ -129,6 +134,11 @@ def _build_model_config(args: argparse.Namespace) -> ModelConfig:
         base_url=getattr(args, 'base_url', os.environ.get('OPENAI_BASE_URL', 'http://127.0.0.1:8000/v1')),
         api_key=getattr(args, 'api_key', os.environ.get('OPENAI_API_KEY', 'local-token')),
         temperature=getattr(args, 'temperature', 0.0),
+        top_p=getattr(args, 'top_p', None),
+        top_k=getattr(args, 'top_k', None),
+        min_p=getattr(args, 'min_p', None),
+        presence_penalty=getattr(args, 'presence_penalty', None),
+        strip_thinking_tags=bool(getattr(args, 'strip_thinking_tags', False)),
         timeout_seconds=getattr(args, 'timeout_seconds', 120.0),
         pricing=ModelPricing(
             input_cost_per_million_tokens_usd=float(
@@ -182,6 +192,14 @@ def _append_agent_forwarded_args(
         command.extend(['--timeout-seconds', str(args.timeout_seconds)])
         command.extend(['--input-cost-per-million', str(args.input_cost_per_million)])
         command.extend(['--output-cost-per-million', str(args.output_cost_per_million)])
+        if getattr(args, 'top_p', None) is not None:
+            command.extend(['--top-p', str(args.top_p)])
+        if getattr(args, 'top_k', None) is not None:
+            command.extend(['--top-k', str(args.top_k)])
+        if getattr(args, 'min_p', None) is not None:
+            command.extend(['--min-p', str(args.min_p)])
+        if getattr(args, 'presence_penalty', None) is not None:
+            command.extend(['--presence-penalty', str(args.presence_penalty)])
     else:
         command.extend(['--model', str(args.model)])
     for path in getattr(args, 'add_dir', []):
@@ -197,6 +215,7 @@ def _append_agent_forwarded_args(
             '--response-schema-strict',
             getattr(args, 'response_schema_strict', False),
         ),
+        ('--strip-thinking-tags', getattr(args, 'strip_thinking_tags', False)),
     ):
         if flag[1]:
             command.append(flag[0])
@@ -216,6 +235,10 @@ def _append_agent_forwarded_args(
         ('--response-schema-file', getattr(args, 'response_schema_file', None)),
         ('--response-schema-name', getattr(args, 'response_schema_name', None)),
         ('--scratchpad-root', getattr(args, 'scratchpad_root', None)),
+        ('--top-p', getattr(args, 'top_p', None)),
+        ('--top-k', getattr(args, 'top_k', None)),
+        ('--min-p', getattr(args, 'min_p', None)),
+        ('--presence-penalty', getattr(args, 'presence_penalty', None)),
         ('--system-prompt', getattr(args, 'system_prompt', None)),
         ('--append-system-prompt', getattr(args, 'append_system_prompt', None)),
         ('--override-system-prompt', getattr(args, 'override_system_prompt', None)),

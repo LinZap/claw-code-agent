@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import re
 from typing import Any, Iterator
 from urllib import error, request
 
@@ -16,6 +17,14 @@ from .agent_types import (
 
 class OpenAICompatError(RuntimeError):
     """Raised when the local OpenAI-compatible backend returns an invalid response."""
+
+
+_THINK_PATTERN = re.compile(r'<think>.*?</think>', re.DOTALL)
+
+
+def _strip_thinking_tags(content: str) -> str:
+    """Remove <think>...</think> blocks from model output."""
+    return _THINK_PATTERN.sub('', content).strip()
 
 
 def _join_url(base_url: str, suffix: str) -> str:
@@ -164,6 +173,8 @@ class OpenAICompatClient:
             raise OpenAICompatError('Local model backend returned no assistant message')
 
         content = _normalize_content(message.get('content'))
+        if self.config.strip_thinking_tags:
+            content = _strip_thinking_tags(content)
         tool_calls = self._parse_tool_calls_from_message(message)
 
         finish_reason = first_choice.get('finish_reason')
@@ -263,6 +274,14 @@ class OpenAICompatClient:
             'temperature': self.config.temperature,
             'stream': stream,
         }
+        if self.config.top_p is not None:
+            payload['top_p'] = self.config.top_p
+        if self.config.top_k is not None:
+            payload['top_k'] = self.config.top_k
+        if self.config.min_p is not None:
+            payload['min_p'] = self.config.min_p
+        if self.config.presence_penalty is not None:
+            payload['presence_penalty'] = self.config.presence_penalty
         if stream:
             payload['stream_options'] = {'include_usage': True}
         response_format = _build_response_format(output_schema)

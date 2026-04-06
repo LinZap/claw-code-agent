@@ -121,6 +121,11 @@ def serialize_model_config(model_config: ModelConfig) -> JSONDict:
         'base_url': model_config.base_url,
         'api_key': model_config.api_key,
         'temperature': model_config.temperature,
+        'top_p': model_config.top_p,
+        'top_k': model_config.top_k,
+        'min_p': model_config.min_p,
+        'presence_penalty': model_config.presence_penalty,
+        'strip_thinking_tags': model_config.strip_thinking_tags,
         'timeout_seconds': model_config.timeout_seconds,
         'pricing': {
             'input_cost_per_million_tokens_usd': model_config.pricing.input_cost_per_million_tokens_usd,
@@ -132,11 +137,20 @@ def serialize_model_config(model_config: ModelConfig) -> JSONDict:
 
 
 def deserialize_model_config(payload: JSONDict) -> ModelConfig:
+    raw_top_p = payload.get('top_p')
+    raw_top_k = payload.get('top_k')
+    raw_min_p = payload.get('min_p')
+    raw_presence_penalty = payload.get('presence_penalty')
     return ModelConfig(
         model=str(payload['model']),
         base_url=str(payload.get('base_url', 'http://127.0.0.1:8000/v1')),
         api_key=str(payload.get('api_key', 'local-token')),
         temperature=float(payload.get('temperature', 0.0)),
+        top_p=float(raw_top_p) if raw_top_p is not None else None,
+        top_k=int(raw_top_k) if raw_top_k is not None else None,
+        min_p=float(raw_min_p) if raw_min_p is not None else None,
+        presence_penalty=float(raw_presence_penalty) if raw_presence_penalty is not None else None,
+        strip_thinking_tags=bool(payload.get('strip_thinking_tags', False)),
         timeout_seconds=float(payload.get('timeout_seconds', 120.0)),
         pricing=_deserialize_pricing(payload.get('pricing')),
     )
